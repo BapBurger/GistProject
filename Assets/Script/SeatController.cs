@@ -2,45 +2,50 @@ using UnityEngine;
 
 public class SeatController : MonoBehaviour
 {
-    // [Header("1. 자동차 연결")]
-    // public CarPhysicsController connectedCar;
-    
-    
-    // [중요] 이제 특정 차가 아니라, '인터페이스'를 담습니다.
     private IMotionSource currentSource;
 
-    [Header("2. 물리 기반 튜닝 (Realism)")]
-    [Tooltip("반응 속도: 너무 빠르면 '회전'으로 느껴짐 (추천: 2 ~ 5)")]
-    public float tiltSpeed = 2.0f;
+    [Header("1. 모션 필터 (Washout & Deadzone)")]
+    [Tooltip("워시아웃: 값이 클수록 시트가 빨리 제자리로 돌아옵니다. (0이면 안 돌아옴, 추천: 0.5 ~ 2.0)")]
+    public float washoutRate = 1.0f;
 
-    [Tooltip("최대 틸트 각도 제한 (하드웨어 보호용, 단위: 도)")]
-    public float maxPitchLimit = 20.0f;
+    [Tooltip("데드존: 이 값보다 작은 미세한 떨림은 무시합니다. (추천: 0.05)")]
+    public float deadZone = 0.05f;
 
-    [Header("3. 코너링 및 슬라이드 게인")]
-    public float slideGain = 0.5f;     // 앞뒤 슬라이드 민감도
-    public float bolsterGain = 30.0f;  // 볼스터 민감도
+    [Header("2. 물리 기반 튜닝 (반응성)")]
+    [Tooltip("반응 속도 (추천: 2 ~ 5)")]
+    public float tiltSpeed = 3.0f;
+    [Tooltip("최대 틸트 각도 제한")]
+    public float maxTiltLimit = 20.0f;
 
-    [Header("4. 부품 인덱스 설정")]
+    [Header("3. 모션 게인 (강도 조절)")]
+    public float slideGain = 0.5f;
+    public float heaveGain = 0.1f;     // [수정] 기본값을 0.5 -> 0.1로 대폭 낮췄습니다.
+    public float bolsterGain = 30.0f;
+
+    [Header("4. 부품 인덱스")]
     public int wholeSlideIndex = 0;
     public int backSeatIndex = 1;
     public int rightBolsterIndex = 2;
     public int leftBolsterIndex = 3;
     public int rightBackBolsterIndex = 4;
     public int leftBackBolsterIndex = 5;
-
-    // ▼▼▼ [추가] 전체 시트 위아래(Lift) 인덱스
     public int wholeLiftIndex = 6;
-    public float heaveGain = 50.0f;
 
-
-    [Header("5. 시트 부품 상세 설정")]
+    [Header("5. 시트 부품 설정")]
     public SeatPart[] seatParts;
 
-    // 외부(매니저)에서 연결 대상을 바꿔주는 함수
+    // 내부 계산용 변수 (워시아웃 필터링용)
+    private float filteredSurge = 0f;
+    private float filteredSway = 0f;
+    private float filteredHeave = 0f;
+
     public void ConnectVehicle(IMotionSource newVehicle)
     {
         currentSource = newVehicle;
-        Debug.Log($"[SeatController] 새로운 소스가 연결됨: {newVehicle}");
+        // 차량이 바뀌면 필터값 초기화
+        filteredSurge = 0f;
+        filteredSway = 0f;
+        filteredHeave = 0f;
     }
 
     void Start()
@@ -50,80 +55,82 @@ public class SeatController : MonoBehaviour
 
     void Update()
     {
-        // 연결된 소스가 없으면 아무것도 안 함
         if (currentSource == null) return;
-
         ProcessSimulation();
     }
 
     void ProcessSimulation()
     {
-        float surgeG = currentSource.GetSurgeG();
-        float swayG = currentSource.GetSwayG();
+        // 1. 원본 데이터 가져오기
+        float rawSurge = currentSource.GetSurgeG();
+        float rawSway = currentSource.GetSwayG();
+        float rawHeave = currentSource.GetHeaveG();
+
+        // 2. 데드존 처리 (너무 작은 값은 0으로)
+        if (Mathf.Abs(rawSurge) < deadZone) rawSurge = 0;
+        if (Mathf.Abs(rawSway) < deadZone) rawSway = 0;
+        if (Mathf.Abs(rawHeave) < deadZone) rawHeave = 0;
+
+        // 3. 워시아웃 필터 적용 (핵심!)
+        // 목표값(raw)을 향해 가되, 입력이 멈추면 washoutRate 속도로 0으로 돌아가려는 성질
+        // (입력값 - 현재값)을 더해주면서, 동시에 0쪽으로 서서히 값을 깎아냄
+
+        // 간단한 구현: 입력을 부드럽게 따라가되, 지속적인 입력은 감쇠시킴 (High-pass filter 유사 효과)
+        // 여기서는 직관적인 "Leaky Integrator" 방식을 씁니다.
+
+        // (1) 일단 입력을 따라감
+        filteredSurge = Mathf.Lerp(filteredSurge, rawSurge, Time.deltaTime * tiltSpeed);
+        filteredSway = Mathf.Lerp(filteredSway, rawSway, Time.deltaTime * tiltSpeed);
+        filteredHeave = Mathf.Lerp(filteredHeave, rawHeave, Time.deltaTime * tiltSpeed);
+
+        // (2) 워시아웃: 매 프레임마다 0을 향해 조금씩 강제로 이동시킴 (Leaking)
+        // 엑셀을 꾹 밟고 있어도(상수값 입력), 시간이 지나면 0이 됨.
+        filteredSurge = Mathf.Lerp(filteredSurge, 0f, Time.deltaTime * washoutRate);
+        filteredSway = Mathf.Lerp(filteredSway, 0f, Time.deltaTime * washoutRate);
+        filteredHeave = Mathf.Lerp(filteredHeave, 0f, Time.deltaTime * washoutRate);
+
 
         // ------------------------------------------------------------------
-        // [1] 물리 기반 틸트 (Tilt Coordination)
-        // 공식: Theta = Asin( G_force )
+        // [A] Pitch (X축 회전) - filteredSurge 사용
         // ------------------------------------------------------------------
+        float clampedSurge = Mathf.Clamp(filteredSurge, -1.0f, 1.0f);
+        float targetPitchAngle = Mathf.Asin(clampedSurge) * Mathf.Rad2Deg;
+        targetPitchAngle = Mathf.Clamp(targetPitchAngle, -maxTiltLimit, maxTiltLimit);
 
-        // 1. G값을 -1 ~ 1 사이로 안전하게 자름 (Asin 함수 에러 방지)
-        float clampedG = Mathf.Clamp(surgeG, -1.0f, 1.0f);
-
-        // 2. 아크사인으로 정확한 각도 계산 (Radian -> Degree)
-        float targetAngle = Mathf.Asin(clampedG) * Mathf.Rad2Deg;
-
-        // 3. 하드웨어 한계 보호
-        targetAngle = Mathf.Clamp(targetAngle, -maxPitchLimit, maxPitchLimit);
-
-        // 4. 등받이 적용 (가속 시 뒤로 눕힘, True = 물리 각도 모드)
-        ApplyMotion(backSeatIndex, targetAngle, true);
-
+        ApplyMotion(backSeatIndex, targetPitchAngle, true);
 
         // ------------------------------------------------------------------
-        // [2] 슬라이드 & 볼스터 (기존 로직 유지)
+        // [B] Slide & Lift - filtered 값 사용
         // ------------------------------------------------------------------
+        ApplyMotion(wholeSlideIndex, filteredSurge * slideGain, false);
+        ApplyMotion(wholeLiftIndex, filteredHeave * heaveGain, false); // Heave 적용
 
-        // 전체 슬라이드 (가속 시 뒤로 밀림)
-        ApplyMotion(wholeSlideIndex, surgeG * slideGain, false);
+        // ------------------------------------------------------------------
+        // [C] Bolster - filteredSway 사용
+        // ------------------------------------------------------------------
+        float rightTarget = (filteredSway > 0) ? filteredSway * bolsterGain : 0;
+        float leftTarget = (filteredSway < 0) ? -filteredSway * bolsterGain : 0;
 
-        // 볼스터 계산
-        float rightTarget = (swayG > 0) ? swayG * bolsterGain : 0;
-        float leftTarget = (swayG < 0) ? swayG * bolsterGain : 0;
-
-        // 엉덩이 볼스터 적용
         ApplyMotion(rightBolsterIndex, rightTarget, false);
         ApplyMotion(leftBolsterIndex, leftTarget, false);
-
-        // 등쪽 볼스터 적용 (방향 반대이므로 마이너스 - 붙임)
         ApplyMotion(rightBackBolsterIndex, -rightTarget, false);
         ApplyMotion(leftBackBolsterIndex, -leftTarget, false);
     }
 
-    // isPhysicsAngle: True면 Gain을 곱하지 않고 각도를 그대로 사용
     void ApplyMotion(int index, float targetValue, bool isPhysicsAngle)
     {
         if (index < 0 || index >= seatParts.Length) return;
-        SeatPart part = seatParts[index];
 
+        SeatPart part = seatParts[index];
         float finalTarget = targetValue;
 
-        // 물리 모드가 아닐 때는(슬라이드, 볼스터) 초기값 기준 상대 이동
-        if (!isPhysicsAngle)
-        {
-            finalTarget = part.initialValue + targetValue;
-        }
-        else
-        {
-            // 물리 모드(등받이)는 초기 각도에서 계산된 각도만큼 더함
-            finalTarget = part.initialValue + targetValue;
-        }
+        if (!isPhysicsAngle) finalTarget = part.initialValue + targetValue;
+        else finalTarget = part.initialValue + targetValue;
 
-        // Min/Max 제한 적용
         finalTarget = Mathf.Clamp(finalTarget, part.minLimit, part.maxLimit);
 
-        // [리얼함의 핵심] 부드러운 이동 (MoveTowards + Lerp 혼합)
-        // 너무 빠르면 기계적이고, 너무 느리면 반응이 굼뜸 -> 적절한 tiltSpeed 찾기가 중요
-        part.currentValue = Mathf.Lerp(part.currentValue, finalTarget, Time.deltaTime * tiltSpeed);
+        // 필터링된 값을 사용하므로 여기서는 즉시 반응해도 부드러움
+        part.currentValue = finalTarget;
 
         UpdateTransform(part);
     }
@@ -132,25 +139,26 @@ public class SeatController : MonoBehaviour
     {
         if (part.targetTransform == null) return;
 
-        if (part.moveType == MoveType.SlideZ)
+        switch (part.moveType)
         {
-            Vector3 p = part.targetTransform.localPosition; p.z = part.currentValue; part.targetTransform.localPosition = p;
-        }
-        else if (part.moveType == MoveType.SlideY)
-        {
-            Vector3 p = part.targetTransform.localPosition; p.y = part.currentValue; part.targetTransform.localPosition = p;
-        }
-        else if (part.moveType == MoveType.RotateX)
-        {
-            part.targetTransform.localRotation = Quaternion.Euler(part.currentValue, part.fixedY, part.fixedZ);
-        }
-        else if (part.moveType == MoveType.RotateY)
-        {
-            part.targetTransform.localRotation = Quaternion.Euler(part.fixedX, part.currentValue, part.fixedZ);
+            case MoveType.SlideZ:
+                Vector3 pZ = part.targetTransform.localPosition; pZ.z = part.currentValue; part.targetTransform.localPosition = pZ;
+                break;
+            case MoveType.SlideY:
+                Vector3 pY = part.targetTransform.localPosition; pY.y = part.currentValue; part.targetTransform.localPosition = pY;
+                break;
+            case MoveType.RotateX:
+                part.targetTransform.localRotation = Quaternion.Euler(part.currentValue, part.fixedY, part.fixedZ);
+                break;
+            case MoveType.RotateY:
+                part.targetTransform.localRotation = Quaternion.Euler(part.fixedX, part.currentValue, part.fixedZ);
+                break;
+            case MoveType.RotateZ:
+                part.targetTransform.localRotation = Quaternion.Euler(part.fixedX, part.fixedY, part.currentValue);
+                break;
         }
     }
 }
-
 
 [System.Serializable]
 public class SeatPart
@@ -160,7 +168,6 @@ public class SeatPart
     public MoveType moveType;
     public float minLimit = -50f;
     public float maxLimit = 50f;
-
     [Header("Debug Info")]
     public float currentValue;
 
@@ -178,18 +185,12 @@ public class SeatPart
 
         if (moveType == MoveType.SlideZ) currentValue = targetTransform.localPosition.z;
         else if (moveType == MoveType.SlideY) currentValue = targetTransform.localPosition.y;
-        else if (moveType == MoveType.RotateX)
-        {
-            currentValue = targetTransform.localEulerAngles.x;
-            if (currentValue > 180) currentValue -= 360;
-        }
-        else if (moveType == MoveType.RotateY)
-        {
-            currentValue = targetTransform.localEulerAngles.y;
-            if (currentValue > 180) currentValue -= 360;
-        }
+        else if (moveType == MoveType.RotateX) currentValue = FixAngle(targetTransform.localEulerAngles.x);
+        else if (moveType == MoveType.RotateY) currentValue = FixAngle(targetTransform.localEulerAngles.y);
+        else if (moveType == MoveType.RotateZ) currentValue = FixAngle(targetTransform.localEulerAngles.z);
+
         initialValue = currentValue;
     }
+    float FixAngle(float angle) { return angle > 180 ? angle - 360 : angle; }
 }
-
-public enum MoveType { RotateX, SlideZ, RotateY, SlideY }
+public enum MoveType { RotateX, SlideZ, RotateY, SlideY, RotateZ }

@@ -1,108 +1,128 @@
 using UnityEngine;
 using UnityEngine.UI;
+using TMPro;
 
 public class SimulationUI : MonoBehaviour
 {
     [Header("--- 연결 대상 ---")]
     public CarPhysicsController carController;
-    public SeatController seatController;
-    // ▼▼▼ [추가] 배 스크립트 연결 변수
     public ShipPhysicsController shipController;
+    public SeatController seatController;
 
-    [Header("--- 키 입력 시각화 ---")]
-    public Image wKeyImage;
-    public Image sKeyImage;
-    public Color activeColor = Color.red;
-    public Color inactiveColor = Color.gray;
-
-    [Header("--- UI 텍스트 ---")]
-    public Text speedText;
-    public Text gForceText;
-    public Text seatStatusText;
+    [Header("--- UI 텍스트 (TMP) ---")]
+    public TMP_Text speedText;
+    public TMP_Text gForceText;
+    public TMP_Text seatStatusText;
+    public TMP_Text modeTitleText;
 
     [Header("--- UI 슬라이더 ---")]
     public Slider surgeSlider;
     public Slider swaySlider;
+    public Slider heaveSlider;
     public Slider rightBolsterSlider;
     public Slider leftBolsterSlider;
 
-    // ▼▼▼ [추가] 파도(Heave) 슬라이더 (없으면 연결 안 해도 됨)
-    public Slider heaveSlider;
+    // ▼▼▼ [신규 추가] WASD 입력 UI ▼▼▼
+    [Header("--- WASD 입력 피드백 ---")]
+    public Image keyImageW; // W키 이미지
+    public Image keyImageA; // A키 이미지
+    public Image keyImageS; // S키 이미지
+    public Image keyImageD; // D키 이미지
+
+    [Tooltip("평상시 색상 (반투명 권장)")]
+    public Color normalColor = new Color(0.5f, 0.5f, 0.5f, 0.5f); // 회색 반투명
+
+    [Tooltip("눌렀을 때 색상 (밝은색 권장)")]
+    public Color pressedColor = new Color(1f, 0.8f, 0f, 1f); // 노란색
+    // ▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲
 
     void Update()
     {
-        if (seatController == null) return;
-
-        UpdateVehicleInfo(); // 이름 변경: CarInfo -> VehicleInfo
+        UpdateVehicleInfo();
         UpdateSeatInfo();
-        UpdateInputVisuals();
+        UpdateInputFeedback(); // [추가] 매 프레임 입력 확인
     }
 
-    void UpdateInputVisuals()
+    // ▼▼▼ [신규 추가] 입력 감지 및 색상 변경 함수 ▼▼▼
+    void UpdateInputFeedback()
     {
-        if (wKeyImage != null) wKeyImage.color = Input.GetKey(KeyCode.W) ? activeColor : inactiveColor;
-        if (sKeyImage != null) sKeyImage.color = Input.GetKey(KeyCode.S) ? activeColor : inactiveColor;
+        // W키 확인 (누르고 있으면 pressedColor, 아니면 normalColor)
+        if (keyImageW != null)
+            keyImageW.color = Input.GetKey(KeyCode.W) ? pressedColor : normalColor;
+
+        // A키 확인
+        if (keyImageA != null)
+            keyImageA.color = Input.GetKey(KeyCode.A) ? pressedColor : normalColor;
+
+        // S키 확인
+        if (keyImageS != null)
+            keyImageS.color = Input.GetKey(KeyCode.S) ? pressedColor : normalColor;
+
+        // D키 확인
+        if (keyImageD != null)
+            keyImageD.color = Input.GetKey(KeyCode.D) ? pressedColor : normalColor;
     }
+    // ▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲
 
     void UpdateVehicleInfo()
     {
         float speed = 0f;
         float lonG = 0f;
         float latG = 0f;
-        float heaveG = 0f; // [추가] 파도 G값
+        float heaveG = 0f;
+        string currentMode = "NONE";
 
-        // 1. 배 모드인지 확인 (배 오브젝트가 켜져 있는지)
+        // 1. 배 모드
         if (shipController != null && shipController.gameObject.activeInHierarchy)
         {
-            // 배 속도는 Rigidbody에서 가져옴 (magnitude * 3.6 = km/h)
-            if (shipController.GetComponent<Rigidbody>() != null)
+            currentMode = "SHIP MODE";
+            if (shipController.GetComponent<Rigidbody>())
                 speed = shipController.GetComponent<Rigidbody>().velocity.magnitude * 3.6f;
 
             lonG = shipController.GetSurgeG();
             latG = shipController.GetSwayG();
-            heaveG = shipController.GetHeaveG(); // 배는 파도 값이 있음!
+            heaveG = shipController.GetHeaveG();
         }
-        // 2. 자동차 모드인지 확인
+        // 2. 자동차 모드
         else if (carController != null && carController.gameObject.activeInHierarchy)
         {
+            currentMode = "CAR MODE";
             speed = carController.currentSpeed * 3.6f;
             lonG = carController.longitudinalG;
             latG = carController.lateralG;
-            heaveG = 0f; // 자동차는 평지라 0
+            heaveG = 0f;
         }
 
         // 텍스트 업데이트
-        speedText.text = $"SPEED: {speed:F0} km/h";
-
-        // ▼▼▼ [수정] Heave 항목 추가
-        gForceText.text = $"[G-Force]\n" +
-                          $"Surge (앞뒤): {lonG:F3} G\n" +
-                          $"Sway  (좌우): {latG:F3} G\n" +
-                          $"Heave (파도): {heaveG:F3} G";
+        if (modeTitleText) modeTitleText.text = currentMode;
+        if (speedText) speedText.text = $"SPEED: {speed:F0} km/h";
+        if (gForceText) gForceText.text = $"Surge: {lonG:F2} G\nSway : {latG:F2} G\nHeave: {heaveG:F2} G";
 
         // 슬라이더 업데이트
-        if (surgeSlider != null) surgeSlider.value = lonG;
-        if (swaySlider != null) swaySlider.value = latG;
-        if (heaveSlider != null) heaveSlider.value = heaveG; // 파도 슬라이더가 있다면 반영
+        if (surgeSlider) surgeSlider.value = lonG;
+        if (swaySlider) swaySlider.value = latG;
+        if (heaveSlider) heaveSlider.value = heaveG;
     }
 
     void UpdateSeatInfo()
     {
+        if (seatController == null) return;
+
         float slideVal = GetSeatValue(seatController.wholeSlideIndex);
+        float liftVal = GetSeatValue(seatController.wholeLiftIndex);
         float pitchVal = GetSeatValue(seatController.backSeatIndex);
         float rightBolsterVal = GetSeatValue(seatController.rightBolsterIndex);
         float leftBolsterVal = GetSeatValue(seatController.leftBolsterIndex);
 
-        // ▼▼▼ [추가] 시트 높이(Lift) 값 가져오기
-        float liftVal = GetSeatValue(seatController.wholeLiftIndex);
-
-        // ▼▼▼ [수정] Lift 항목 추가
-        seatStatusText.text = $"[Seat Status]\n" +
-                              $"Slide : {slideVal:F1}\n" +
-                              $"Lift  : {liftVal:F1}\n" + // 시트가 위아래로 얼마나 움직이는지 표시
-                              $"Pitch : {pitchVal:F1}\n" +
-                              $"R-Bolster: {rightBolsterVal:F1}\n" +
-                              $"L-Bolster: {leftBolsterVal:F1}";
+        if (seatStatusText)
+        {
+            seatStatusText.text = $"[Seat Status]\n" +
+                                  $"Slide : {slideVal:F1}\n" +
+                                  $"Lift  : {liftVal:F1}\n" +
+                                  $"Pitch : {pitchVal:F1}\n" +
+                                  $"R-Bolster: {rightBolsterVal:F1}\n" +
+                                  $"L-Bolster: {leftBolsterVal:F1}";
+        }
 
         if (rightBolsterSlider != null) rightBolsterSlider.value = rightBolsterVal;
         if (leftBolsterSlider != null) leftBolsterSlider.value = leftBolsterVal;
@@ -110,7 +130,7 @@ public class SimulationUI : MonoBehaviour
 
     float GetSeatValue(int index)
     {
-        if (index >= 0 && index < seatController.seatParts.Length)
+        if (seatController != null && index >= 0 && index < seatController.seatParts.Length)
         {
             return seatController.seatParts[index].currentValue;
         }
