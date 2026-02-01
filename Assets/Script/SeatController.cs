@@ -2,27 +2,38 @@ using UnityEngine;
 
 public class SeatController : MonoBehaviour
 {
-    private IMotionSource currentSource;
+    [Header("1. 소스 연결 & 토글 (핵심 기능)")]
+    public GameObject carSourceObj;  // 자동차 오브젝트 연결
+    public bool enableCar = true;    // [토글] 체크하면 자동차 G값 반영
 
-    [Header("1. 모션 필터 (Washout & Deadzone)")]
-    [Tooltip("워시아웃: 값이 클수록 시트가 빨리 제자리로 돌아옵니다. (0이면 안 돌아옴, 추천: 0.5 ~ 2.0)")]
+    public GameObject shipSourceObj; // 배 오브젝트 연결
+    public bool enableShip = true;   // [토글] 체크하면 배 G값 반영
+
+    private IMotionSource carSource;
+    private IMotionSource shipSource;
+
+    [Header("2. 모터 반응 속도")]
+    [Tooltip("값이 클수록 빠르지만 너무 크면 뚝뚝 끊김 (추천: 50 ~ 100)")]
+    public float actuatorSpeed = 60.0f;
+
+    [Header("3. 모션 필터")]
     public float washoutRate = 1.0f;
+    public float deadZone = 0.01f;
 
-    [Tooltip("데드존: 이 값보다 작은 미세한 떨림은 무시합니다. (추천: 0.05)")]
-    public float deadZone = 0.05f;
-
-    [Header("2. 물리 기반 튜닝 (반응성)")]
-    [Tooltip("반응 속도 (추천: 2 ~ 5)")]
-    public float tiltSpeed = 3.0f;
-    [Tooltip("최대 틸트 각도 제한")]
+    [Header("4. 물리 튜닝")]
+    public float tiltSpeed = 20.0f;
     public float maxTiltLimit = 20.0f;
 
-    [Header("3. 모션 게인 (강도 조절)")]
+    [Header("5. 모션 게인 (강도)")]
     public float slideGain = 0.5f;
-    public float heaveGain = 0.1f;     // [수정] 기본값을 0.5 -> 0.1로 대폭 낮췄습니다.
-    public float bolsterGain = 30.0f;
+    public float heaveGain = 0.1f;
+    public float bolsterGain = 8.0f;
 
-    [Header("4. 부품 인덱스")]
+    [Header("6. 볼스터 설정")]
+    public bool useDirectBolster = true;
+    public bool invertLeftBolster = true; // [중요] 아까 이게 켜져야 잘 된다고 하셨으므로 기본값 true
+
+    [Header("7. 부품 인덱스")]
     public int wholeSlideIndex = 0;
     public int backSeatIndex = 1;
     public int rightBolsterIndex = 2;
@@ -31,90 +42,98 @@ public class SeatController : MonoBehaviour
     public int leftBackBolsterIndex = 5;
     public int wholeLiftIndex = 6;
 
-    [Header("5. 시트 부품 설정")]
+    [Header("8. 시트 부품")]
     public SeatPart[] seatParts;
 
-    // 내부 계산용 변수 (워시아웃 필터링용)
+    // 필터 변수
     private float filteredSurge = 0f;
     private float filteredSway = 0f;
     private float filteredHeave = 0f;
 
-    public void ConnectVehicle(IMotionSource newVehicle)
-    {
-        currentSource = newVehicle;
-        // 차량이 바뀌면 필터값 초기화
-        filteredSurge = 0f;
-        filteredSway = 0f;
-        filteredHeave = 0f;
-    }
-
     void Start()
     {
         foreach (var part in seatParts) part.Initialize();
+
+        // 1. 자동차 소스 찾기
+        if (carSourceObj != null)
+        {
+            carSource = carSourceObj.GetComponent<IMotionSource>();
+            if (carSource == null) Debug.LogError("Car Object에 IMotionSource 스크립트가 없습니다.");
+        }
+
+        // 2. 배 소스 찾기
+        if (shipSourceObj != null)
+        {
+            shipSource = shipSourceObj.GetComponent<IMotionSource>();
+            if (shipSource == null) Debug.LogError("Ship Object에 IMotionSource 스크립트가 없습니다.");
+        }
     }
 
     void Update()
     {
-        if (currentSource == null) return;
         ProcessSimulation();
     }
 
     void ProcessSimulation()
     {
-        // 1. 원본 데이터 가져오기
-        float rawSurge = currentSource.GetSurgeG();
-        float rawSway = currentSource.GetSwayG();
-        float rawHeave = currentSource.GetHeaveG();
+        // ---------------------------------------------------------
+        // 1. [Total G 계산] 토글 상태에 따라 G값을 합산합니다.
+        // ---------------------------------------------------------
+        float totalSurge = 0f;
+        float totalSway = 0f;
+        float totalHeave = 0f;
 
-        // 2. 데드존 처리 (너무 작은 값은 0으로)
-        if (Mathf.Abs(rawSurge) < deadZone) rawSurge = 0;
-        if (Mathf.Abs(rawSway) < deadZone) rawSway = 0;
-        if (Mathf.Abs(rawHeave) < deadZone) rawHeave = 0;
+        // (A) 자동차 G값 더하기
+        if (enableCar && carSource != null)
+        {
+            totalSurge += carSource.GetSurgeG();
+            totalSway += carSource.GetSwayG();
+            totalHeave += carSource.GetHeaveG();
+        }
 
-        // 3. 워시아웃 필터 적용 (핵심!)
-        // 목표값(raw)을 향해 가되, 입력이 멈추면 washoutRate 속도로 0으로 돌아가려는 성질
-        // (입력값 - 현재값)을 더해주면서, 동시에 0쪽으로 서서히 값을 깎아냄
+        // (B) 배 G값 더하기
+        if (enableShip && shipSource != null)
+        {
+            totalSurge += shipSource.GetSurgeG();
+            totalSway += shipSource.GetSwayG();
+            totalHeave += shipSource.GetHeaveG();
+        }
 
-        // 간단한 구현: 입력을 부드럽게 따라가되, 지속적인 입력은 감쇠시킴 (High-pass filter 유사 효과)
-        // 여기서는 직관적인 "Leaky Integrator" 방식을 씁니다.
+        // ---------------------------------------------------------
+        // 2. 필터링 로직 (기존과 동일)
+        // ---------------------------------------------------------
+        if (Mathf.Abs(totalSurge) < deadZone) totalSurge = 0;
+        if (Mathf.Abs(totalHeave) < deadZone) totalHeave = 0;
 
-        // (1) 일단 입력을 따라감
-        filteredSurge = Mathf.Lerp(filteredSurge, rawSurge, Time.deltaTime * tiltSpeed);
-        filteredSway = Mathf.Lerp(filteredSway, rawSway, Time.deltaTime * tiltSpeed);
-        filteredHeave = Mathf.Lerp(filteredHeave, rawHeave, Time.deltaTime * tiltSpeed);
+        filteredSurge = Mathf.Lerp(filteredSurge, totalSurge, Time.deltaTime * tiltSpeed);
+        filteredHeave = Mathf.Lerp(filteredHeave, totalHeave, Time.deltaTime * tiltSpeed);
 
-        // (2) 워시아웃: 매 프레임마다 0을 향해 조금씩 강제로 이동시킴 (Leaking)
-        // 엑셀을 꾹 밟고 있어도(상수값 입력), 시간이 지나면 0이 됨.
         filteredSurge = Mathf.Lerp(filteredSurge, 0f, Time.deltaTime * washoutRate);
-        filteredSway = Mathf.Lerp(filteredSway, 0f, Time.deltaTime * washoutRate);
         filteredHeave = Mathf.Lerp(filteredHeave, 0f, Time.deltaTime * washoutRate);
 
+        // ---------------------------------------------------------
+        // 3. 볼스터 처리
+        // ---------------------------------------------------------
+        float swayToUse = useDirectBolster ? totalSway : Mathf.Lerp(filteredSway, totalSway, Time.deltaTime * tiltSpeed);
 
-        // ------------------------------------------------------------------
-        // [A] Pitch (X축 회전) - filteredSurge 사용
-        // ------------------------------------------------------------------
-        float clampedSurge = Mathf.Clamp(filteredSurge, -1.0f, 1.0f);
-        float targetPitchAngle = Mathf.Asin(clampedSurge) * Mathf.Rad2Deg;
-        targetPitchAngle = Mathf.Clamp(targetPitchAngle, -maxTiltLimit, maxTiltLimit);
-
-        ApplyMotion(backSeatIndex, targetPitchAngle, true);
-
-        // ------------------------------------------------------------------
-        // [B] Slide & Lift - filtered 값 사용
-        // ------------------------------------------------------------------
-        ApplyMotion(wholeSlideIndex, filteredSurge * slideGain, false);
-        ApplyMotion(wholeLiftIndex, filteredHeave * heaveGain, false); // Heave 적용
-
-        // ------------------------------------------------------------------
-        // [C] Bolster - filteredSway 사용
-        // ------------------------------------------------------------------
-        float rightTarget = (filteredSway > 0) ? filteredSway * bolsterGain : 0;
-        float leftTarget = (filteredSway < 0) ? -filteredSway * bolsterGain : 0;
+        float rightTarget = (swayToUse > 0) ? swayToUse * bolsterGain : 0;
+        float leftRaw = (swayToUse < 0) ? -swayToUse * bolsterGain : 0;
+        float leftTarget = invertLeftBolster ? -leftRaw : leftRaw;
 
         ApplyMotion(rightBolsterIndex, rightTarget, false);
         ApplyMotion(leftBolsterIndex, leftTarget, false);
         ApplyMotion(rightBackBolsterIndex, -rightTarget, false);
         ApplyMotion(leftBackBolsterIndex, -leftTarget, false);
+
+        // ---------------------------------------------------------
+        // 4. 나머지 파트 적용
+        // ---------------------------------------------------------
+        float clampedSurge = Mathf.Clamp(filteredSurge, -1.0f, 1.0f);
+        float targetPitch = Mathf.Asin(clampedSurge) * Mathf.Rad2Deg;
+
+        ApplyMotion(backSeatIndex, Mathf.Clamp(targetPitch, -maxTiltLimit, maxTiltLimit), true);
+        ApplyMotion(wholeSlideIndex, filteredSurge * slideGain, false);
+        ApplyMotion(wholeLiftIndex, filteredHeave * heaveGain, false);
     }
 
     void ApplyMotion(int index, float targetValue, bool isPhysicsAngle)
@@ -122,15 +141,12 @@ public class SeatController : MonoBehaviour
         if (index < 0 || index >= seatParts.Length) return;
 
         SeatPart part = seatParts[index];
-        float finalTarget = targetValue;
-
-        if (!isPhysicsAngle) finalTarget = part.initialValue + targetValue;
-        else finalTarget = part.initialValue + targetValue;
+        float finalTarget = part.initialValue + targetValue;
 
         finalTarget = Mathf.Clamp(finalTarget, part.minLimit, part.maxLimit);
 
-        // 필터링된 값을 사용하므로 여기서는 즉시 반응해도 부드러움
-        part.currentValue = finalTarget;
+        // 부드러운 모터 움직임
+        part.currentValue = Mathf.MoveTowards(part.currentValue, finalTarget, Time.deltaTime * actuatorSpeed);
 
         UpdateTransform(part);
     }
@@ -160,6 +176,7 @@ public class SeatController : MonoBehaviour
     }
 }
 
+// SeatPart 클래스와 Enum은 파일 아래에 그대로 두세요.
 [System.Serializable]
 public class SeatPart
 {
@@ -168,13 +185,10 @@ public class SeatPart
     public MoveType moveType;
     public float minLimit = -50f;
     public float maxLimit = 50f;
-    [Header("Debug Info")]
     public float currentValue;
 
     [HideInInspector] public float initialValue;
-    [HideInInspector] public float fixedX;
-    [HideInInspector] public float fixedY;
-    [HideInInspector] public float fixedZ;
+    [HideInInspector] public float fixedX, fixedY, fixedZ;
 
     public void Initialize()
     {
@@ -193,4 +207,5 @@ public class SeatPart
     }
     float FixAngle(float angle) { return angle > 180 ? angle - 360 : angle; }
 }
+
 public enum MoveType { RotateX, SlideZ, RotateY, SlideY, RotateZ }

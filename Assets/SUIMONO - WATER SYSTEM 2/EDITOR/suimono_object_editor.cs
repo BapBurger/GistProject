@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using UnityEngine;
 using UnityEditor;
 using System.Collections;
@@ -192,7 +192,8 @@ public class suimono_object_editor : Editor {
 				}
 				EditorGUI.LabelField(new Rect(rt.x+margin+27, rt.y+basePos+48, 180, 18),"Reflect Layers");
 				if (script.gameObject.activeInHierarchy){
-					script.reflectLayer = EditorGUI.MaskField(new Rect(rt.x+margin+120, rt.y+basePos+48, 90, 18),"", script.reflectLayer, script.suiLayerMasks.ToArray());
+					//수정된 코드 (복사해서 덮어쓰세요)
+					script.reflectLayer = EditorGUI.MaskField(rt, "Reflect Layers", script.reflectLayer, UnityEditorInternal.InternalEditorUtility.layers);
 				}
 				EditorGUI.LabelField(new Rect(rt.x+margin+225, rt.y+basePos+48, 180, 18),"Resolution");
 				if (script.gameObject.activeInHierarchy){
