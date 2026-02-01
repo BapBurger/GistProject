@@ -2,72 +2,99 @@ using UnityEngine;
 
 public class SimulationManager : MonoBehaviour
 {
-    [Header("0. Á¦¾îÇÒ ½ÃÆ®")]
+    [Header("0. ì œì–´í•  ì‹œíŠ¸")]
     public SeatController seatController;
 
-    [Header("1. ÀÚµ¿Â÷ ¼¼ÆÃ")]
+    [Header("1. ìë™ì°¨ ì„¸íŒ…")]
     public GameObject carObject;
     public GameObject carCamera;
     public CarPhysicsController carScript;
     public GameObject trackObject;
 
-    [Header("2. ¼±¹Ú ¼¼ÆÃ")]
+    [Header("2. ì„ ë°• ì„¸íŒ…")]
     public GameObject shipObject;
     public GameObject shipCamera;
     public ShipPhysicsController shipScript;
 
-    [Header("3. ºñÇà±â ¼¼ÆÃ (½Å±Ô Ãß°¡)")]
-    public GameObject airplaneObject; // ºñÇà±â ¿ÀºêÁ§Æ®
-    public GameObject airplaneCamera; // ºñÇà±â Ä«¸Ş¶ó
-    // public AirplaneController airplaneScript; // ³ªÁß¿¡ ºñÇà±â ½ºÅ©¸³Æ® ¸¸µé¸é ÁÖ¼® ÇØÁ¦
+    [Header("4. ëª¨ì…˜ ë¯¹ì„œ")]
+    public DualMotionMixer motionMixer;
 
     void Start()
     {
-        // ÀÚµ¿Â÷´Â ¾ÆÁ÷ ¾øÀ¸´Ï±î ÁÖ¼® Ã³¸®ÇÏ°Å³ª Áö¿ì¼¼¿ä
-        // OnCarButtonClicked(); 
+        // 1. UI ë²„íŠ¼ ìˆ¨ê¸°ê¸°
+        GameObject btnCar = GameObject.Find("Btn_Car");
+        if (btnCar) btnCar.SetActive(false);
 
-        // °ÔÀÓ ½ÃÀÛÇÏÀÚ¸¶ÀÚ "¹è ¸ğµå"·Î ÁøÀÔ!
-        OnShipButtonClicked();
+        GameObject btnShip = GameObject.Find("Btn_Ship");
+        if (btnShip) btnShip.SetActive(false);
+
+        GameObject btnAir = GameObject.Find("Btn_Air");
+        if (btnAir) btnAir.SetActive(false);
+
+        // 2. í˜¼í•© ëª¨ë“œ ì§„ì… (Car + Ship)
+        EnterMixedMode();
     }
 
-    // [¹öÆ° 1] ÀÚµ¿Â÷ ¸ğµå
-    public void OnCarButtonClicked()
+    void EnterMixedMode()
     {
-        SetMode(true, false, false); // Â÷¸¸ ÄÑ±â
-        if (seatController != null && carScript != null)
-            seatController.ConnectVehicle(carScript);
-    }
+        // A. ìë™ì°¨ì™€ ë°° ë‘˜ ë‹¤ í™œì„±í™”
+        if (carObject) carObject.SetActive(true);
+        if (carCamera) carCamera.SetActive(false); // ì¹´ë©”ë¼ëŠ” ë°° ì¹´ë©”ë¼ ì“¸ê±°ì„
+        if (trackObject) trackObject.SetActive(true);
 
-    // [¹öÆ° 2] ¼±¹Ú ¸ğµå
+        if (shipObject) shipObject.SetActive(true);
+        if (shipCamera) 
+        {
+            shipCamera.SetActive(true);
+            // ì¹´ë©”ë¼ëŠ” ë°°ë¥¼ ë”°ë¼ê°€ì•¼ í•¨ (ì›ë³µ)
+            ShipCameraFollow camScript = shipCamera.GetComponent<ShipCameraFollow>();
+            if (camScript != null && shipObject != null)
+            {
+                camScript.target = shipObject.transform;
+            }
+        }
+
+        // B. ë¯¹ì„œ ì„¤ì •
+        if (motionMixer == null) motionMixer = GetComponent<DualMotionMixer>();
+        if (motionMixer == null) motionMixer = gameObject.AddComponent<DualMotionMixer>();
+
+        // ë¯¹ì„œì— ìŠ¤í¬ë¦½íŠ¸ ì—°ê²°
+        if (motionMixer != null)
+        {
+            motionMixer.carScript = carScript;
+            motionMixer.shipScript = shipScript;
+            // í˜¹ì‹œ 0ìœ¼ë¡œ ë˜ì–´ìˆì„ ê²½ìš°ë¥¼ ëŒ€ë¹„í•´ 1ë¡œ ê°•ì œ ì„¤ì •
+            motionMixer.carMixRatio = 1.0f;
+            motionMixer.shipMixRatio = 1.0f;
+            
+            // ì‹œíŠ¸ì— ë¯¹ì„œ ì—°ê²°
+            if (seatController != null)
+            {
+                seatController.ConnectVehicle(motionMixer);
+            }
+        }
+    }
+    
+    // (ê¸°ì¡´ ë©”ì„œë“œ ìœ ì§€/ë¬´ì‹œ)
+    public void OnCarButtonClicked() { /* ... */ }
+
+
+    // [ë²„íŠ¼ 2] ì„ ë°• ëª¨ë“œ (í•„ìš”ì‹œ ì‚¬ìš©, í˜„ì¬ëŠ” í˜¼í•© ëª¨ë“œê°€ ê¸°ë³¸)
     public void OnShipButtonClicked()
     {
-        SetMode(false, true, false); // ¹è¸¸ ÄÑ±â
-        if (seatController != null && shipScript != null)
-            seatController.ConnectVehicle(shipScript);
+        // SetMode(false, true, false); 
+        // if (seatController != null && shipScript != null)
+        //    seatController.ConnectVehicle(shipScript);
     }
 
-    // [¹öÆ° 3] ºñÇà±â ¸ğµå (Ãß°¡µÊ)
-    public void OnAirplaneButtonClicked()
-    {
-        Debug.Log("ºñÇà±â ¸ğµå ÁøÀÔ!");
-        SetMode(false, false, true); // ºñÇà±â¸¸ ÄÑ±â
-
-        // ³ªÁß¿¡ ºñÇà±â ½ºÅ©¸³Æ® ¿¬°á
-        // if (seatController != null && airplaneScript != null)
-        //    seatController.ConnectVehicle(airplaneScript);
-    }
-
-    // Áßº¹ ÄÚµå¸¦ ÁÙ¿©ÁÖ´Â µµ¿ì¹Ì ÇÔ¼ö
-    void SetMode(bool isCar, bool isShip, bool isPlane)
+    // ì¤‘ë³µ ì½”ë“œë¥¼ ì¤„ì—¬ì£¼ëŠ” ë„ìš°ë¯¸ í•¨ìˆ˜
+    void SetMode(bool isCar, bool isShip)
     {
         if (carObject) carObject.SetActive(isCar);
         if (carCamera) carCamera.SetActive(isCar);
-        if (trackObject) trackObject.SetActive(isCar); // Æ®·¢Àº Â÷ Å» ¶§¸¸
+        if (trackObject) trackObject.SetActive(isCar); 
 
         if (shipObject) shipObject.SetActive(isShip);
         if (shipCamera) shipCamera.SetActive(isShip);
-
-        if (airplaneObject) airplaneObject.SetActive(isPlane);
-        if (airplaneCamera) airplaneCamera.SetActive(isPlane);
     }
 }

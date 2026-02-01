@@ -4,25 +4,25 @@ public class SeatController : MonoBehaviour
 {
     private IMotionSource currentSource;
 
-    [Header("1. ¸ğ¼Ç ÇÊÅÍ (Washout & Deadzone)")]
-    [Tooltip("¿ö½Ã¾Æ¿ô: °ªÀÌ Å¬¼ö·Ï ½ÃÆ®°¡ »¡¸® Á¦ÀÚ¸®·Î µ¹¾Æ¿É´Ï´Ù. (0ÀÌ¸é ¾È µ¹¾Æ¿È, ÃßÃµ: 0.5 ~ 2.0)")]
+    [Header("1. ëª¨ì…˜ í•„í„° (Washout & Deadzone)")]
+    [Tooltip("ì›Œì‹œì•„ì›ƒ: ê°’ì´ í´ìˆ˜ë¡ ì‹œíŠ¸ê°€ ë¹¨ë¦¬ ì œìë¦¬ë¡œ ëŒì•„ì˜µë‹ˆë‹¤. (0ì´ë©´ ì•ˆ ëŒì•„ì˜´, ì¶”ì²œ: 0.5 ~ 2.0)")]
     public float washoutRate = 1.0f;
 
-    [Tooltip("µ¥µåÁ¸: ÀÌ °ªº¸´Ù ÀÛÀº ¹Ì¼¼ÇÑ ¶³¸²Àº ¹«½ÃÇÕ´Ï´Ù. (ÃßÃµ: 0.05)")]
-    public float deadZone = 0.05f;
+    [Tooltip("ë°ë“œì¡´: ì´ ê°’ë³´ë‹¤ ì‘ì€ ë¯¸ì„¸í•œ ë–¨ë¦¼ì€ ë¬´ì‹œí•©ë‹ˆë‹¤. (0.05 -> 0.01ë¡œ ë¯¼ê°í•˜ê²Œ ë³€ê²½)")]
+    public float deadZone = 0.01f;
 
-    [Header("2. ¹°¸® ±â¹İ Æ©´× (¹İÀÀ¼º)")]
-    [Tooltip("¹İÀÀ ¼Óµµ (ÃßÃµ: 2 ~ 5)")]
-    public float tiltSpeed = 3.0f;
-    [Tooltip("ÃÖ´ë Æ¿Æ® °¢µµ Á¦ÇÑ")]
+    [Header("2. ë¬¼ë¦¬ ê¸°ë°˜ íŠœë‹ (ë°˜ì‘ì„±)")]
+    [Tooltip("ë°˜ì‘ ì†ë„ (ì¶”ì²œ: 2 ~ 5)")]
+    public float tiltSpeed = 5.0f; // ì¡°ê¸ˆ ë” ë¹ ë¥´ê²Œ ë°˜ì‘
+    [Tooltip("ìµœëŒ€ í‹¸íŠ¸ ê°ë„ ì œí•œ")]
     public float maxTiltLimit = 20.0f;
 
-    [Header("3. ¸ğ¼Ç °ÔÀÎ (°­µµ Á¶Àı)")]
+    [Header("3. ëª¨ì…˜ ê²Œì¸ (ê°•ë„ ì¡°ì ˆ)")]
     public float slideGain = 0.5f;
-    public float heaveGain = 0.1f;     // [¼öÁ¤] ±âº»°ªÀ» 0.5 -> 0.1·Î ´ëÆø ³·Ãè½À´Ï´Ù.
-    public float bolsterGain = 30.0f;
+    public float heaveGain = 0.1f;     // [ìˆ˜ì •] ê¸°ë³¸ê°’ì„ 0.5 -> 0.1ë¡œ ëŒ€í­ ë‚®ì·„ìŠµë‹ˆë‹¤.
+    public float bolsterGain = 50.0f; // 30 -> 50 ì¦ê°€
 
-    [Header("4. ºÎÇ° ÀÎµ¦½º")]
+    [Header("4. ë¶€í’ˆ ì¸ë±ìŠ¤")]
     public int wholeSlideIndex = 0;
     public int backSeatIndex = 1;
     public int rightBolsterIndex = 2;
@@ -31,10 +31,10 @@ public class SeatController : MonoBehaviour
     public int leftBackBolsterIndex = 5;
     public int wholeLiftIndex = 6;
 
-    [Header("5. ½ÃÆ® ºÎÇ° ¼³Á¤")]
+    [Header("5. ì‹œíŠ¸ ë¶€í’ˆ ì„¤ì •")]
     public SeatPart[] seatParts;
 
-    // ³»ºÎ °è»ê¿ë º¯¼ö (¿ö½Ã¾Æ¿ô ÇÊÅÍ¸µ¿ë)
+    // ë‚´ë¶€ ê³„ì‚°ìš© ë³€ìˆ˜ (ì›Œì‹œì•„ì›ƒ í•„í„°ë§ìš©)
     private float filteredSurge = 0f;
     private float filteredSway = 0f;
     private float filteredHeave = 0f;
@@ -42,10 +42,11 @@ public class SeatController : MonoBehaviour
     public void ConnectVehicle(IMotionSource newVehicle)
     {
         currentSource = newVehicle;
-        // Â÷·®ÀÌ ¹Ù²î¸é ÇÊÅÍ°ª ÃÊ±âÈ­
+        // ì°¨ëŸ‰ì´ ë°”ë€Œë©´ í•„í„°ê°’ ì´ˆê¸°í™”
         filteredSurge = 0f;
         filteredSway = 0f;
         filteredHeave = 0f;
+        Debug.Log($"[SeatController] Connected to {newVehicle}");
     }
 
     void Start()
@@ -61,37 +62,40 @@ public class SeatController : MonoBehaviour
 
     void ProcessSimulation()
     {
-        // 1. ¿øº» µ¥ÀÌÅÍ °¡Á®¿À±â
+        // 1. ì›ë³¸ ë°ì´í„° ê°€ì ¸ì˜¤ê¸°
         float rawSurge = currentSource.GetSurgeG();
         float rawSway = currentSource.GetSwayG();
         float rawHeave = currentSource.GetHeaveG();
 
-        // 2. µ¥µåÁ¸ Ã³¸® (³Ê¹« ÀÛÀº °ªÀº 0À¸·Î)
+        // 2. ë°ë“œì¡´ ì²˜ë¦¬ (ë„ˆë¬´ ì‘ì€ ê°’ì€ 0ìœ¼ë¡œ)
         if (Mathf.Abs(rawSurge) < deadZone) rawSurge = 0;
         if (Mathf.Abs(rawSway) < deadZone) rawSway = 0;
         if (Mathf.Abs(rawHeave) < deadZone) rawHeave = 0;
 
-        // 3. ¿ö½Ã¾Æ¿ô ÇÊÅÍ Àû¿ë (ÇÙ½É!)
-        // ¸ñÇ¥°ª(raw)À» ÇâÇØ °¡µÇ, ÀÔ·ÂÀÌ ¸ØÃß¸é washoutRate ¼Óµµ·Î 0À¸·Î µ¹¾Æ°¡·Á´Â ¼ºÁú
-        // (ÀÔ·Â°ª - ÇöÀç°ª)À» ´õÇØÁÖ¸é¼­, µ¿½Ã¿¡ 0ÂÊÀ¸·Î ¼­¼­È÷ °ªÀ» ±ğ¾Æ³¿
+        // 3. ì›Œì‹œì•„ì›ƒ í•„í„° ì ìš© (í•µì‹¬!)
+        // ëª©í‘œê°’(raw)ì„ í–¥í•´ ê°€ë˜, ì…ë ¥ì´ ë©ˆì¶”ë©´ washoutRate ì†ë„ë¡œ 0ìœ¼ë¡œ ëŒì•„ê°€ë ¤ëŠ” ì„±ì§ˆ
+        // (ì…ë ¥ê°’ - í˜„ì¬ê°’)ì„ ë”í•´ì£¼ë©´ì„œ, ë™ì‹œì— 0ìª½ìœ¼ë¡œ ì„œì„œíˆ ê°’ì„ ê¹ì•„ëƒ„
 
-        // °£´ÜÇÑ ±¸Çö: ÀÔ·ÂÀ» ºÎµå·´°Ô µû¶ó°¡µÇ, Áö¼ÓÀûÀÎ ÀÔ·ÂÀº °¨¼è½ÃÅ´ (High-pass filter À¯»ç È¿°ú)
-        // ¿©±â¼­´Â Á÷°üÀûÀÎ "Leaky Integrator" ¹æ½ÄÀ» ¾¹´Ï´Ù.
+        // ê°„ë‹¨í•œ êµ¬í˜„: ì…ë ¥ì„ ë¶€ë“œëŸ½ê²Œ ë”°ë¼ê°€ë˜, ì§€ì†ì ì¸ ì…ë ¥ì€ ê°ì‡ ì‹œí‚´ (High-pass filter ìœ ì‚¬ íš¨ê³¼)
+        // ì—¬ê¸°ì„œëŠ” ì§ê´€ì ì¸ "Leaky Integrator" ë°©ì‹ì„ ì”ë‹ˆë‹¤.
 
-        // (1) ÀÏ´Ü ÀÔ·ÂÀ» µû¶ó°¨
+        // (1) ì¼ë‹¨ ì…ë ¥ì„ ë”°ë¼ê°
         filteredSurge = Mathf.Lerp(filteredSurge, rawSurge, Time.deltaTime * tiltSpeed);
         filteredSway = Mathf.Lerp(filteredSway, rawSway, Time.deltaTime * tiltSpeed);
         filteredHeave = Mathf.Lerp(filteredHeave, rawHeave, Time.deltaTime * tiltSpeed);
 
-        // (2) ¿ö½Ã¾Æ¿ô: ¸Å ÇÁ·¹ÀÓ¸¶´Ù 0À» ÇâÇØ Á¶±İ¾¿ °­Á¦·Î ÀÌµ¿½ÃÅ´ (Leaking)
-        // ¿¢¼¿À» ²Ú ¹â°í ÀÖ¾îµµ(»ó¼ö°ª ÀÔ·Â), ½Ã°£ÀÌ Áö³ª¸é 0ÀÌ µÊ.
+        // (2) ì›Œì‹œì•„ì›ƒ: ë§¤ í”„ë ˆì„ë§ˆë‹¤ 0ì„ í–¥í•´ ì¡°ê¸ˆì”© ê°•ì œë¡œ ì´ë™ì‹œí‚´ (Leaking)
+        // ì—‘ì…€ì„ ê¾¹ ë°Ÿê³  ìˆì–´ë„(ìƒìˆ˜ê°’ ì…ë ¥), ì‹œê°„ì´ ì§€ë‚˜ë©´ 0ì´ ë¨.
         filteredSurge = Mathf.Lerp(filteredSurge, 0f, Time.deltaTime * washoutRate);
         filteredSway = Mathf.Lerp(filteredSway, 0f, Time.deltaTime * washoutRate);
         filteredHeave = Mathf.Lerp(filteredHeave, 0f, Time.deltaTime * washoutRate);
 
+        // Debug Log (1ì´ˆì— í•œë²ˆì”©ë§Œ ì°ë“ ê°€ í•´ì•¼í•˜ì§€ë§Œ ì¼ë‹¨ ê°’ í™•ì¸ì„ ìœ„í•´)
+        // Debug.Log($"RawG: ({rawSurge:F2}, {rawSway:F2}, {rawHeave:F2}) -> Filtered: ({filteredSurge:F2}, {filteredSway:F2}, {filteredHeave:F2})");
+
 
         // ------------------------------------------------------------------
-        // [A] Pitch (XÃà È¸Àü) - filteredSurge »ç¿ë
+        // [A] Pitch (Xì¶• íšŒì „) - filteredSurge ì‚¬ìš©
         // ------------------------------------------------------------------
         float clampedSurge = Mathf.Clamp(filteredSurge, -1.0f, 1.0f);
         float targetPitchAngle = Mathf.Asin(clampedSurge) * Mathf.Rad2Deg;
@@ -100,14 +104,16 @@ public class SeatController : MonoBehaviour
         ApplyMotion(backSeatIndex, targetPitchAngle, true);
 
         // ------------------------------------------------------------------
-        // [B] Slide & Lift - filtered °ª »ç¿ë
+        // [B] Slide & Lift - filtered ê°’ ì‚¬ìš©
         // ------------------------------------------------------------------
         ApplyMotion(wholeSlideIndex, filteredSurge * slideGain, false);
-        ApplyMotion(wholeLiftIndex, filteredHeave * heaveGain, false); // Heave Àû¿ë
+        ApplyMotion(wholeLiftIndex, filteredHeave * heaveGain, false); // Heave ì ìš©
 
         // ------------------------------------------------------------------
-        // [C] Bolster - filteredSway »ç¿ë
+        // [C] Bolster - filteredSway ì‚¬ìš©
         // ------------------------------------------------------------------
+        // ìš°íšŒì „ ì‹œ(Sway > 0) -> ì˜¤ë¥¸ìª½ ë³¼ìŠ¤í„°(RightTarget)
+        // ì¢ŒíšŒì „ ì‹œ(Sway < 0) -> ì™¼ìª½ ë³¼ìŠ¤í„°(LeftTarget)
         float rightTarget = (filteredSway > 0) ? filteredSway * bolsterGain : 0;
         float leftTarget = (filteredSway < 0) ? -filteredSway * bolsterGain : 0;
 
@@ -129,7 +135,7 @@ public class SeatController : MonoBehaviour
 
         finalTarget = Mathf.Clamp(finalTarget, part.minLimit, part.maxLimit);
 
-        // ÇÊÅÍ¸µµÈ °ªÀ» »ç¿ëÇÏ¹Ç·Î ¿©±â¼­´Â Áï½Ã ¹İÀÀÇØµµ ºÎµå·¯¿ò
+        // í•„í„°ë§ëœ ê°’ì„ ì‚¬ìš©í•˜ë¯€ë¡œ ì—¬ê¸°ì„œëŠ” ì¦‰ì‹œ ë°˜ì‘í•´ë„ ë¶€ë“œëŸ¬ì›€
         part.currentValue = finalTarget;
 
         UpdateTransform(part);
