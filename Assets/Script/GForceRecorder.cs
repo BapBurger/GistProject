@@ -126,25 +126,32 @@ public class GForceRecorder : MonoBehaviour
         // 3. ★ Output (실제 시트가 표현한 G값 역산)
         // ---------------------------------------------------
         float out_surge = 0f;
-        float out_sway = 0f;
+        float out_sway = 0f; // 초기화
         float out_heave = 0f;
 
-        // [Output Surge] 등받이 각도(Pitch)를 G값으로 환산
+        // [Output Surge] Pitch 기반 역산
         if (seatController.seatParts.Length > seatController.backSeatIndex)
         {
             float currentPitch = seatController.seatParts[seatController.backSeatIndex].currentValue;
             out_surge = Mathf.Sin(currentPitch * Mathf.Deg2Rad);
         }
 
-        // [Output Sway] 볼스터 움직임을 게인으로 나눠서 원본 G 추정
-        if (seatController.seatParts.Length > seatController.rightBolsterIndex)
+        // [Output Sway] ★ 수정된 로직: (오른쪽 - 왼쪽)으로 양방향 계산
+        if (seatController.seatParts.Length > seatController.rightBolsterIndex &&
+            seatController.seatParts.Length > seatController.leftBolsterIndex)
         {
-            float currentBolster = seatController.seatParts[seatController.rightBolsterIndex].currentValue;
+            float r_val = seatController.seatParts[seatController.rightBolsterIndex].currentValue;
+            float l_val = seatController.seatParts[seatController.leftBolsterIndex].currentValue;
+
+            // Invert 옵션 때문에 부호가 헷갈릴 수 있으므로, 절대값(움직인 양)으로 계산합니다.
+            // 오른쪽이 많이 움직였으면 (+), 왼쪽이 많이 움직였으면 (-)
+            float combinedBolster = Mathf.Abs(r_val) - Mathf.Abs(l_val);
+
             if (Mathf.Abs(seatController.bolsterGain) > 0.001f)
-                out_sway = currentBolster / seatController.bolsterGain;
+                out_sway = combinedBolster / seatController.bolsterGain;
         }
 
-        // [Output Heave] 리프트 위치를 게인으로 나눠서 원본 G 추정
+        // [Output Heave] Lift 기반 역산
         if (seatController.seatParts.Length > seatController.wholeLiftIndex)
         {
             float currentLift = seatController.seatParts[seatController.wholeLiftIndex].currentValue;
