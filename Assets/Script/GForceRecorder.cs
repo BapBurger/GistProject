@@ -3,7 +3,7 @@ using UnityEngine.UI;
 using TMPro;
 using System.IO;
 using System.Text;
-using System.Diagnostics; // Process.Start를 위해 필요 (Debug 충돌 원인)
+using System.Diagnostics;
 
 public class GForceRecorder : MonoBehaviour
 {
@@ -11,7 +11,6 @@ public class GForceRecorder : MonoBehaviour
     public SeatController seatController;
     public TMP_Text buttonText;
 
-    // 내부 변수
     private StringBuilder sb = new StringBuilder();
     private bool isRecording = false;
     private float recordStartTime;
@@ -25,11 +24,11 @@ public class GForceRecorder : MonoBehaviour
     void StartRecording()
     {
         sb.Clear();
-        // 헤더 작성: [입력값] -> [토글반영값] -> [★실제출력값(Output)]
+        // 헤더 수정: Applied -> Gain (명확하게 변경)
         sb.AppendLine("Time," +
-                      "Input_Surge,Applied_Surge,Output_Surge," +
-                      "Input_Sway,Applied_Sway,Output_Sway," +
-                      "Input_Heave,Applied_Heave,Output_Heave");
+                      "Input_Surge,Gain_Surge,Output_Surge," +
+                      "Input_Sway,Gain_Sway,Output_Sway," +
+                      "Input_Heave,Gain_Heave,Output_Heave");
 
         isRecording = true;
         recordStartTime = Time.time;
@@ -39,16 +38,14 @@ public class GForceRecorder : MonoBehaviour
             buttonText.text = "STOP & SAVE";
             buttonText.color = Color.red;
         }
-        // [수정] UnityEngine.Debug 라고 명시
         UnityEngine.Debug.Log("Record Started.");
     }
 
     void StopRecording()
     {
         isRecording = false;
-
         string timestamp = System.DateTime.Now.ToString("yyyy-MM-dd_HH-mm-ss");
-        string fileName = $"G_Log_Full_{timestamp}.csv";
+        string fileName = $"G_Log_Gain_{timestamp}.csv"; // 파일명 변경
         string filePath = Path.Combine(Application.dataPath, "../", fileName);
 
         try
@@ -56,23 +53,16 @@ public class GForceRecorder : MonoBehaviour
             File.WriteAllText(filePath, sb.ToString());
             UnityEngine.Debug.Log($"Saved: {fileName}");
 
-            // ▼▼▼ 파이썬 그래프 자동 실행 ▼▼▼
+            // 파이썬 그래프 자동 실행
             string pythonScriptPath = Path.Combine(Application.dataPath, "../GForceVisualizer.py");
-
             if (File.Exists(pythonScriptPath))
             {
                 ProcessStartInfo startInfo = new ProcessStartInfo();
-                startInfo.FileName = "python"; // 혹은 "python3"
+                startInfo.FileName = "python";
                 startInfo.Arguments = $"\"{pythonScriptPath}\"";
                 startInfo.UseShellExecute = true;
                 startInfo.CreateNoWindow = false;
-
                 Process.Start(startInfo);
-                UnityEngine.Debug.Log("그래프 시각화 실행!");
-            }
-            else
-            {
-                UnityEngine.Debug.LogError($"파이썬 스크립트를 찾을 수 없습니다: {pythonScriptPath}");
             }
         }
         catch (System.Exception e)
@@ -93,16 +83,13 @@ public class GForceRecorder : MonoBehaviour
 
         float t = Time.time - recordStartTime;
 
-        // ---------------------------------------------------
-        // 1. Input Total (차 + 배 입력 총합)
-        // ---------------------------------------------------
+        // 1. Raw Input (게인 적용 전, 순수 합계)
         float c_surge = 0, c_sway = 0, c_heave = 0;
         if (seatController.carSourceObj != null)
         {
             var carParams = seatController.carSourceObj.GetComponent<IMotionSource>();
             if (carParams != null) { c_surge = carParams.GetSurgeG(); c_sway = carParams.GetSwayG(); c_heave = carParams.GetHeaveG(); }
         }
-
         float s_surge = 0, s_sway = 0, s_heave = 0;
         if (seatController.shipSourceObj != null)
         {
@@ -110,48 +97,36 @@ public class GForceRecorder : MonoBehaviour
             if (shipParams != null) { s_surge = shipParams.GetSurgeG(); s_sway = shipParams.GetSwayG(); s_heave = shipParams.GetHeaveG(); }
         }
 
+        // 캔슬링 모드 여부에 상관없이 Raw Input은 그냥 더해서 보여줌 (참고용)
         float input_surge = c_surge + s_surge;
         float input_sway = c_sway + s_sway;
         float input_heave = c_heave + s_heave;
 
-        // ---------------------------------------------------
-        // 2. Applied (토글 상태 반영)
-        // ---------------------------------------------------
-        float app_surge = 0, app_sway = 0, app_heave = 0;
-        if (seatController.enableCar) { app_surge += c_surge; app_sway += c_sway; app_heave += c_heave; }
-        if (seatController.enableShip) { app_surge += s_surge; app_sway += s_sway; app_heave += s_heave; }
+        // 2. ★ Gain Adjusted (Master Gain + Cancellation이 모두 적용된 값)
+        // SeatController가 계산해둔 모니터 값을 그대로 가져옵니다.
+        float gain_surge = seatController.monitorSurgeG;
+        float gain_sway = seatController.monitorSwayG;
+        float gain_heave = seatController.monitorHeaveG;
 
+        // 3. Output (실제 시트 움직임 역산)
+        float out_surge = 0f, out_sway = 0f, out_heave = 0f;
 
-        // ---------------------------------------------------
-        // 3. ★ Output (실제 시트가 표현한 G값 역산)
-        // ---------------------------------------------------
-        float out_surge = 0f;
-        float out_sway = 0f; // 초기화
-        float out_heave = 0f;
-
-        // [Output Surge] Pitch 기반 역산
         if (seatController.seatParts.Length > seatController.backSeatIndex)
         {
             float currentPitch = seatController.seatParts[seatController.backSeatIndex].currentValue;
             out_surge = Mathf.Sin(currentPitch * Mathf.Deg2Rad);
         }
 
-        // [Output Sway] ★ 수정된 로직: (오른쪽 - 왼쪽)으로 양방향 계산
         if (seatController.seatParts.Length > seatController.rightBolsterIndex &&
             seatController.seatParts.Length > seatController.leftBolsterIndex)
         {
             float r_val = seatController.seatParts[seatController.rightBolsterIndex].currentValue;
             float l_val = seatController.seatParts[seatController.leftBolsterIndex].currentValue;
-
-            // Invert 옵션 때문에 부호가 헷갈릴 수 있으므로, 절대값(움직인 양)으로 계산합니다.
-            // 오른쪽이 많이 움직였으면 (+), 왼쪽이 많이 움직였으면 (-)
             float combinedBolster = Mathf.Abs(r_val) - Mathf.Abs(l_val);
-
             if (Mathf.Abs(seatController.bolsterGain) > 0.001f)
                 out_sway = combinedBolster / seatController.bolsterGain;
         }
 
-        // [Output Heave] Lift 기반 역산
         if (seatController.seatParts.Length > seatController.wholeLiftIndex)
         {
             float currentLift = seatController.seatParts[seatController.wholeLiftIndex].currentValue;
@@ -159,12 +134,10 @@ public class GForceRecorder : MonoBehaviour
                 out_heave = currentLift / seatController.heaveGain;
         }
 
-        // ---------------------------------------------------
-        // 4. CSV 저장
-        // ---------------------------------------------------
+        // CSV 저장
         sb.AppendLine($"{t:F3}," +
-                      $"{input_surge:F4},{app_surge:F4},{out_surge:F4}," +
-                      $"{input_sway:F4},{app_sway:F4},{out_sway:F4}," +
-                      $"{input_heave:F4},{app_heave:F4},{out_heave:F4}");
+                      $"{input_surge:F4},{gain_surge:F4},{out_surge:F4}," +
+                      $"{input_sway:F4},{gain_sway:F4},{out_sway:F4}," +
+                      $"{input_heave:F4},{gain_heave:F4},{out_heave:F4}");
     }
 }
