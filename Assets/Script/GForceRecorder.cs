@@ -83,7 +83,7 @@ public class GForceRecorder : MonoBehaviour
 
         float t = Time.time - recordStartTime;
 
-        // 1. Raw Input (게인 적용 전, 순수 합계)
+        // 1. Raw Input (게인 적용 전)
         float c_surge = 0, c_sway = 0, c_heave = 0;
         if (seatController.carSourceObj != null)
         {
@@ -97,41 +97,56 @@ public class GForceRecorder : MonoBehaviour
             if (shipParams != null) { s_surge = shipParams.GetSurgeG(); s_sway = shipParams.GetSwayG(); s_heave = shipParams.GetHeaveG(); }
         }
 
-        // 캔슬링 모드 여부에 상관없이 Raw Input은 그냥 더해서 보여줌 (참고용)
         float input_surge = c_surge + s_surge;
         float input_sway = c_sway + s_sway;
         float input_heave = c_heave + s_heave;
 
-        // 2. ★ Gain Adjusted (Master Gain + Cancellation이 모두 적용된 값)
-        // SeatController가 계산해둔 모니터 값을 그대로 가져옵니다.
+        // 2. Gain Adjusted (모니터 값 가져오기)
         float gain_surge = seatController.monitorSurgeG;
         float gain_sway = seatController.monitorSwayG;
         float gain_heave = seatController.monitorHeaveG;
 
-        // 3. Output (실제 시트 움직임 역산)
+        // ---------------------------------------------------
+        // 3. ★ Output (여기를 수정했습니다!)
+        // [수정] 절대 위치(currentValue)가 아니라 변화량(current - initial)을 사용
+        // ---------------------------------------------------
         float out_surge = 0f, out_sway = 0f, out_heave = 0f;
 
+        // [Output Surge] Pitch
         if (seatController.seatParts.Length > seatController.backSeatIndex)
         {
-            float currentPitch = seatController.seatParts[seatController.backSeatIndex].currentValue;
-            out_surge = Mathf.Sin(currentPitch * Mathf.Deg2Rad);
+            // 각도는 보통 0도에서 시작하므로 그대로 둬도 되지만, 혹시 몰라 초기값 뺌
+            var part = seatController.seatParts[seatController.backSeatIndex];
+            float deltaAngle = part.currentValue - part.initialValue;
+            out_surge = Mathf.Sin(deltaAngle * Mathf.Deg2Rad);
         }
 
+        // [Output Sway] Bolster
         if (seatController.seatParts.Length > seatController.rightBolsterIndex &&
             seatController.seatParts.Length > seatController.leftBolsterIndex)
         {
-            float r_val = seatController.seatParts[seatController.rightBolsterIndex].currentValue;
-            float l_val = seatController.seatParts[seatController.leftBolsterIndex].currentValue;
-            float combinedBolster = Mathf.Abs(r_val) - Mathf.Abs(l_val);
+            var r_part = seatController.seatParts[seatController.rightBolsterIndex];
+            var l_part = seatController.seatParts[seatController.leftBolsterIndex];
+
+            // 초기 위치 보정
+            float r_delta = r_part.currentValue - r_part.initialValue;
+            float l_delta = l_part.currentValue - l_part.initialValue;
+
+            float combinedBolster = Mathf.Abs(r_delta) - Mathf.Abs(l_delta);
             if (Mathf.Abs(seatController.bolsterGain) > 0.001f)
                 out_sway = combinedBolster / seatController.bolsterGain;
         }
 
+        // [Output Heave] Lift (여기가 문제였음!)
         if (seatController.seatParts.Length > seatController.wholeLiftIndex)
         {
-            float currentLift = seatController.seatParts[seatController.wholeLiftIndex].currentValue;
+            var part = seatController.seatParts[seatController.wholeLiftIndex];
+
+            // ★ 핵심: (현재 높이 - 초기 높이) / 게인
+            float deltaLift = part.currentValue - part.initialValue;
+
             if (Mathf.Abs(seatController.heaveGain) > 0.001f)
-                out_heave = currentLift / seatController.heaveGain;
+                out_heave = deltaLift / seatController.heaveGain;
         }
 
         // CSV 저장
@@ -140,4 +155,6 @@ public class GForceRecorder : MonoBehaviour
                       $"{input_sway:F4},{gain_sway:F4},{out_sway:F4}," +
                       $"{input_heave:F4},{gain_heave:F4},{out_heave:F4}");
     }
+
+
 }
