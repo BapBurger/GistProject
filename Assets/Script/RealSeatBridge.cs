@@ -1,163 +1,170 @@
 using UnityEngine;
 using System.IO.Ports;
 using System;
-using System.Text;
 
 public class RealSeatBridge : MonoBehaviour
 {
-    [Header("0. Å×½ºÆ® ¹× ¸®¼Â")]
-    [Tooltip("RÅ°: ÇöÀç À§Ä¡¸¦ 0Á¡À¸·Î °­Á¦ ÃÊ±âÈ­")]
+    [Header("0. í…ŒìŠ¤íŠ¸ ë° ì œì–´")]
+    [Tooltip("Rí‚¤: ì¶”ì • ìœ„ì¹˜ë¥¼ 0ìœ¼ë¡œ ë¦¬ì…‹")]
     public KeyCode resetKey = KeyCode.R;
     public bool enableMotor1 = true;
     public bool enableMotor2 = true;
     public bool enableMotor3 = true;
     public bool enableMotor4 = true;
 
-    [Header("=== ¸ğ´ÏÅÍ¸µ ===")]
-    public int currentStep1 = 0;
-    public int currentStep2 = 0;
-    public int currentStep3 = 0;
-    public int currentStep4 = 0;
+    [Header("=== ëª¨ë‹ˆí„°ë§: ì¶”ì • ìœ„ì¹˜ (ìŠ¤í…) ===")]
+    public float monitorPos1 = 0;
+    public float monitorPos2 = 0;
+    public float monitorPos3 = 0;
+    public float monitorPos4 = 0;
 
-    [Header("1. ¿¬°á ¼³Á¤")]
+    [Header("=== ëª¨ë‹ˆí„°ë§: ëª©í‘œ ìœ„ì¹˜ (ìŠ¤í…) ===")]
+    public float monitorTarget1 = 0;
+    public float monitorTarget2 = 0;
+    public float monitorTarget3 = 0;
+    public float monitorTarget4 = 0;
+
+    [Header("=== ëª¨ë‹ˆí„°ë§: ì „ì†¡ ì†ë„ (PWM) ===")]
+    public int monitorSpeed1 = 0;
+    public int monitorSpeed2 = 0;
+    public int monitorSpeed3 = 0;
+    public int monitorSpeed4 = 0;
+
+    [Header("1. ì‹œë¦¬ì–¼ ì„¤ì •")]
     public string portName = "COM6";
     public int baudRate = 115200;
 
-    [Header("2. µ¥ÀÌÅÍ ¿¬°á")]
+    [Header("2. ì»¨íŠ¸ë¡¤ëŸ¬ ì—°ê²°")]
     public SeatController seatController;
 
-    [Header("3. º¯È¯ ºñÀ² ¼³Á¤ (ÇÙ½É!)")]
-    [Tooltip("°Å¸®(Slide/Heave) ºñÀ²: À¯´ÏÆ¼ °ªÀÌ ÀÛÀ¸¹Ç·Î(0.1) Å« ¼ö¸¦ °öÇØ¾ß ÇÔ")]
-    public float distanceRatio = 5000f; // ¡Ú Slide, Heave¿ë (º¸Åë 1000~5000)
+    [Header("3. ë³€í™˜ ë¹„ìœ¨ (Unityê°’ â†’ ê°€ìƒ ìŠ¤í…)")]
+    [Tooltip("ê±°ë¦¬(Slide/Heave)ìš©: Unity ì˜¤í”„ì…‹ì´ ì‘ìœ¼ë¯€ë¡œ(~0.1) í° ê°’ í•„ìš”")]
+    public float distanceRatio = 5000f;
+    [Tooltip("ê°ë„(Back/Bottom)ìš©: Unity ì˜¤í”„ì…‹ì´ í¬ë¯€ë¡œ(~10Â°) ì‘ì€ ê°’ í•„ìš”")]
+    public float angleRatio = 200f;
 
-    [Tooltip("°¢µµ(Back/Bottom) ºñÀ²: À¯´ÏÆ¼ °ªÀÌ Å©¹Ç·Î(10µµ) ÀÛÀº ¼ö¸¦ °öÇØ¾ß ÇÔ")]
-    public float angleRatio = 200f;     // ¡Ú Tilt¿ë (º¸Åë 100~500)
+    [Header("4. Pì œì–´ ì„¤ì •")]
+    [Tooltip("ë¹„ë¡€ ê²Œì¸: ì˜¤ì°¨(ìŠ¤í…) Ã— kP = PWMê°’. ë†’ìœ¼ë©´ ë¹ ë¥¸ ë°˜ì‘, ë‚®ìœ¼ë©´ ë¶€ë“œëŸ¬ìš´ ë°˜ì‘")]
+    public float kP = 0.5f;
 
-    [Header("4. µåµåµæ ¹æÁö (DeadZone)")]
-    public int startThreshold = 80;
-    public int stopThreshold = 10;
+    [Tooltip("ì†ŒìŒ ë°©ì§€ ìµœì†Œ PWM: ì´ ê°’ ë¯¸ë§Œì˜ ì†ë„ëŠ” ì¦‰ì‹œ 0 ì°¨ë‹¨")]
+    public int minPWM = 130;
 
-    [Header("Motor 1 : Slide (°Å¸®)")]
+    [Header("5. Dead Reckoning (ìœ„ì¹˜ ì¶”ì •)")]
+    [Tooltip("PWM 255ì¼ ë•Œ ì´ˆë‹¹ ì¶”ì • ì´ë™ ìŠ¤í… ìˆ˜. ì‹¤ì œ ëª¨í„° ì†ë„ì— ë§ê²Œ íŠœë‹")]
+    public float stepsPerSecondAtMax = 500f;
+
+    [Header("Motor 1 : Slide (ê±°ë¦¬)")]
     public int motor1_Index = 0;
     public int limit1 = 3000;
     public bool reverse1 = false;
 
-    [Header("Motor 2 : Back Seat (°¢µµ)")]
+    [Header("Motor 2 : Back Seat (ê°ë„)")]
     public int motor2_Index = 1;
     public int limit2 = 3000;
     public bool reverse2 = false;
 
-    [Header("Motor 3 : Bottom Seat (°¢µµ - Motor 2 ¿¬µ¿)")]
+    [Header("Motor 3 : Bottom Seat (ê°ë„ - Motor 2 ì—°ë™)")]
     public int limit3 = 3000;
     public bool reverse3 = false;
 
-    [Header("Motor 4 : Heave (°Å¸®)")]
+    [Header("Motor 4 : Heave (ê±°ë¦¬)")]
     public int motor4_Index = 6;
     public int limit4 = 3000;
     public bool reverse4 = false;
 
+    // â”€â”€ private â”€â”€
     private SerialPort sp;
     private string lastPacket = "";
-    private int[] currentVirtualSteps = new int[4];
-    private bool[] isMoving = new bool[4];
+    private float[] estimatedPos = new float[4];
+    private int[] lastSpeed = new int[4];
+    private float[] targetSteps = new float[4];
 
     void Start()
     {
         OpenConnection();
         for (int i = 0; i < 4; i++)
         {
-            currentVirtualSteps[i] = 0;
-            isMoving[i] = false;
+            estimatedPos[i] = 0f;
+            lastSpeed[i] = 0;
+            targetSteps[i] = 0f;
         }
     }
 
     void Update()
     {
+        // ë¦¬ì…‹
         if (Input.GetKeyDown(resetKey))
         {
-            for (int i = 0; i < 4; i++) currentVirtualSteps[i] = 0;
-            Debug.Log("<color=cyan>Position Reset to 0</color>");
+            for (int i = 0; i < 4; i++) estimatedPos[i] = 0f;
+            Debug.Log("<color=cyan>[RealSeatBridge] Position Reset to 0</color>");
         }
 
-        if (sp != null && sp.IsOpen && seatController != null)
+        if (sp == null || !sp.IsOpen || seatController == null) return;
+
+        // â”€â”€ 1. Dead Reckoning: ì§€ë‚œ í”„ë ˆì„ì˜ ì†ë„ë¡œ ì¶”ì • ìœ„ì¹˜ ê°±ì‹  â”€â”€
+        float dt = Time.deltaTime;
+        for (int i = 0; i < 4; i++)
         {
-            StringBuilder sb = new StringBuilder();
-
-            // ¡Ú °¢ ¸ğÅÍ ¼º°İ¿¡ ¸Â´Â Ratio Àû¿ë
-            // Motor 1 (Slide) -> distanceRatio
-            sb.Append(enableMotor1 ? FollowTarget(0, motor1_Index, limit1, distanceRatio, reverse1) : "0").Append(",");
-
-            // Motor 2 (Back/Angle) -> angleRatio
-            sb.Append(enableMotor2 ? FollowTarget(1, motor2_Index, limit2, angleRatio, reverse2) : "0").Append(",");
-
-            // Motor 3 (Back/Angle) -> angleRatio
-            sb.Append(enableMotor3 ? FollowTarget(2, motor2_Index, limit3, angleRatio, reverse3) : "0").Append(",");
-
-            // Motor 4 (Heave) -> distanceRatio
-            sb.Append(enableMotor4 ? FollowTarget(3, motor4_Index, limit4, distanceRatio, reverse4) : "0");
-
-            string currentPacket = sb.ToString();
-            SendPacket(currentPacket);
-
-            currentStep1 = currentVirtualSteps[0];
-            currentStep2 = currentVirtualSteps[1];
-            currentStep3 = currentVirtualSteps[2];
-            currentStep4 = currentVirtualSteps[3];
+            estimatedPos[i] += (lastSpeed[i] / 255f) * stepsPerSecondAtMax * dt;
         }
+
+        // â”€â”€ 2. ê° ëª¨í„° ì†ë„ ê³„ì‚° â”€â”€
+        int s1 = enableMotor1 ? CalcSpeed(0, motor1_Index, limit1, distanceRatio, reverse1) : 0;
+        int s2 = enableMotor2 ? CalcSpeed(1, motor2_Index, limit2, angleRatio,    reverse2) : 0;
+        int s3 = enableMotor3 ? CalcSpeed(2, motor2_Index, limit3, angleRatio,    reverse3) : 0;
+        int s4 = enableMotor4 ? CalcSpeed(3, motor4_Index, limit4, distanceRatio, reverse4) : 0;
+
+        lastSpeed[0] = s1; lastSpeed[1] = s2;
+        lastSpeed[2] = s3; lastSpeed[3] = s4;
+
+        // â”€â”€ 3. íŒ¨í‚· ì „ì†¡ â”€â”€
+        string packet = $"{s1},{s2},{s3},{s4}";
+        SendPacket(packet);
+
+        // â”€â”€ 4. Inspector ëª¨ë‹ˆí„°ë§ â”€â”€
+        monitorPos1 = estimatedPos[0]; monitorPos2 = estimatedPos[1];
+        monitorPos3 = estimatedPos[2]; monitorPos4 = estimatedPos[3];
+        monitorTarget1 = targetSteps[0]; monitorTarget2 = targetSteps[1];
+        monitorTarget3 = targetSteps[2]; monitorTarget4 = targetSteps[3];
+        monitorSpeed1 = s1; monitorSpeed2 = s2;
+        monitorSpeed3 = s3; monitorSpeed4 = s4;
     }
 
-    // ¡Ú Ratio¸¦ ¸Å°³º¯¼ö·Î ¹Şµµ·Ï ¼öÁ¤µÊ
-    string FollowTarget(int motorArrIdx, int partIdx, int limit, float ratio, bool isReverse)
+    /// <summary>
+    /// Pì œì–´: ì˜¤ì°¨ì— ë¹„ë¡€í•˜ëŠ” ì†ë„(-255~+255)ë¥¼ ê³„ì‚°í•œë‹¤.
+    /// |ì†ë„| < minPWM ì´ë©´ ì†ŒìŒ ë°©ì§€ë¥¼ ìœ„í•´ ì¦‰ì‹œ 0 ì°¨ë‹¨.
+    /// </summary>
+    int CalcSpeed(int motorIdx, int partIdx, int limit, float ratio, bool isReverse)
     {
-        float targetUnityValue = GetSeatPartOffset(partIdx);
+        // ëª©í‘œ ìŠ¤í… ê³„ì‚°
+        float offset = GetSeatPartOffset(partIdx);
+        float target = offset * ratio;
+        if (isReverse) target *= -1f;
+        target = Mathf.Clamp(target, -limit, limit);
+        targetSteps[motorIdx] = target;
 
-        // ÇØ´ç ¸ğÅÍ¿¡ ¸Â´Â ºñÀ²(Ratio) Àû¿ë
-        int targetStep = (int)(targetUnityValue * ratio);
+        // ì¶”ì • ìœ„ì¹˜ í´ë¨í”„
+        estimatedPos[motorIdx] = Mathf.Clamp(estimatedPos[motorIdx], -limit, limit);
 
-        if (isReverse) targetStep *= -1;
-        targetStep = Mathf.Clamp(targetStep, -limit, limit);
+        // Pì œì–´
+        float error = target - estimatedPos[motorIdx];
+        int speed = (int)Mathf.Clamp(error * kP, -255f, 255f);
 
-        int error = targetStep - currentVirtualSteps[motorArrIdx];
-        int cmd = 0;
-        int absError = Mathf.Abs(error);
+        // â˜… ì†ŒìŒ ë°©ì§€: |speed| < minPWM â†’ ì¦‰ì‹œ 0 ì°¨ë‹¨ â˜…
+        if (speed > 0 && speed < minPWM) speed = 0;
+        if (speed < 0 && speed > -minPWM) speed = 0;
 
-        // È÷½ºÅ×¸®½Ã½º ·ÎÁ÷
-        if (isMoving[motorArrIdx])
-        {
-            if (absError > stopThreshold)
-            {
-                if (error > 0) cmd = 1; else cmd = -1;
-            }
-            else
-            {
-                cmd = 0;
-                isMoving[motorArrIdx] = false;
-            }
-        }
-        else
-        {
-            if (absError > startThreshold)
-            {
-                if (error > 0) cmd = 1; else cmd = -1;
-                isMoving[motorArrIdx] = true;
-            }
-            else
-            {
-                cmd = 0;
-            }
-        }
+        // ë¦¬ë°‹ ëì—ì„œ ë” ì´ìƒ ë‚˜ê°€ì§€ ì•Šë„ë¡
+        if (speed > 0 && estimatedPos[motorIdx] >= limit) speed = 0;
+        if (speed < 0 && estimatedPos[motorIdx] <= -limit) speed = 0;
 
-        if (cmd == 1 && currentVirtualSteps[motorArrIdx] >= limit) cmd = 0;
-        if (cmd == -1 && currentVirtualSteps[motorArrIdx] <= -limit) cmd = 0;
-
-        if (cmd != 0) currentVirtualSteps[motorArrIdx] += cmd;
-
-        return cmd.ToString();
+        return speed;
     }
 
     float GetSeatPartOffset(int index)
     {
-        if (seatController.seatParts.Length > index && index >= 0)
+        if (index >= 0 && index < seatController.seatParts.Length)
         {
             SeatPart part = seatController.seatParts[index];
             return part.currentValue - part.initialValue;
@@ -175,12 +182,24 @@ public class RealSeatBridge : MonoBehaviour
 
     void OpenConnection()
     {
-        try { sp = new SerialPort(portName, baudRate); sp.Open(); sp.ReadTimeout = 20; }
-        catch (Exception e) { Debug.LogError($"Connection Error: {e.Message}"); }
+        try
+        {
+            sp = new SerialPort(portName, baudRate);
+            sp.Open();
+            sp.ReadTimeout = 20;
+        }
+        catch (Exception e)
+        {
+            Debug.LogError($"[RealSeatBridge] Connection Error: {e.Message}");
+        }
     }
 
     void OnApplicationQuit()
     {
-        if (sp != null && sp.IsOpen) { sp.WriteLine("0,0,0,0"); sp.Close(); }
+        if (sp != null && sp.IsOpen)
+        {
+            sp.WriteLine("0,0,0,0");
+            sp.Close();
+        }
     }
 }
