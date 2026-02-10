@@ -24,11 +24,11 @@ public class RealSeatBridge : MonoBehaviour
     public float monitorTarget3 = 0;
     public float monitorTarget4 = 0;
 
-    [Header("=== 모니터링: 전송 속도 (PWM) ===")]
-    public int monitorSpeed1 = 0;
-    public int monitorSpeed2 = 0;
-    public int monitorSpeed3 = 0;
-    public int monitorSpeed4 = 0;
+    [Header("=== 모니터링: 전송 명령 ===")]
+    public int monitorCmd1 = 0;
+    public int monitorCmd2 = 0;
+    public int monitorCmd3 = 0;
+    public int monitorCmd4 = 0;
 
     [Header("1. 시리얼 설정")]
     public string portName = "COM6";
@@ -43,18 +43,12 @@ public class RealSeatBridge : MonoBehaviour
     [Tooltip("각도(Back/Bottom)용: Unity 오프셋이 크므로(~10°) 작은 값 필요")]
     public float angleRatio = 200f;
 
-    [Header("4. P제어 설정")]
-    [Tooltip("비례 게인: 오차(스텝) × kP = PWM값. 높으면 빠른 반응, 낮으면 부드러운 반응")]
-    public float kP = 0.5f;
-
-    [Tooltip("소음 방지 최소 PWM: 움직일 때 이 값 이상만 사용, 멈출 때 즉시 0")]
-    public int minPWM = 130;
-
-    [Tooltip("정지 판정 데드존 (스텝): 오차가 이 이하면 도착으로 판단하고 정지")]
-    public float deadZone = 20f;
+    [Header("4. 제어 설정")]
+    [Tooltip("정지 판정 데드존 (스텝): 오차가 이 이하면 도착 판단하고 정지")]
+    public float deadZone = 30f;
 
     [Header("5. Dead Reckoning (위치 추정)")]
-    [Tooltip("PWM 255일 때 초당 추정 이동 스텝 수. 실제 모터 속도에 맞게 튜닝")]
+    [Tooltip("풀파워(255)일 때 초당 추정 이동 스텝 수. 실제 모터 속도에 맞게 튜닝")]
     public float stepsPerSecondAtMax = 1000f;
 
     [Header("Motor 1 : Slide (거리)")]
@@ -80,7 +74,7 @@ public class RealSeatBridge : MonoBehaviour
     private SerialPort sp;
     private string lastPacket = "";
     private float[] estimatedPos = new float[4];
-    private int[] lastSpeed = new int[4];
+    private int[] lastCmd = new int[4];
     private float[] targetSteps = new float[4];
 
     void Start()
@@ -89,7 +83,7 @@ public class RealSeatBridge : MonoBehaviour
         for (int i = 0; i < 4; i++)
         {
             estimatedPos[i] = 0f;
-            lastSpeed[i] = 0;
+            lastCmd[i] = 0;
             targetSteps[i] = 0f;
         }
     }
@@ -105,24 +99,25 @@ public class RealSeatBridge : MonoBehaviour
 
         if (sp == null || !sp.IsOpen || seatController == null) return;
 
-        // ── 1. Dead Reckoning: 지난 프레임의 속도로 추정 위치 갱신 ──
+        // ── 1. Dead Reckoning: 지난 프레임의 명령으로 추정 위치 갱신 ──
         float dt = Time.deltaTime;
         for (int i = 0; i < 4; i++)
         {
-            estimatedPos[i] += (lastSpeed[i] / 255f) * stepsPerSecondAtMax * dt;
+            // lastCmd는 -1, 0, +1 이므로 방향 × 풀스피드 × 시간
+            estimatedPos[i] += lastCmd[i] * stepsPerSecondAtMax * dt;
         }
 
-        // ── 2. 각 모터 속도 계산 ──
-        int s1 = enableMotor1 ? CalcSpeed(0, motor1_Index, limit1, distanceRatio, reverse1) : 0;
-        int s2 = enableMotor2 ? CalcSpeed(1, motor2_Index, limit2, angleRatio,    reverse2) : 0;
-        int s3 = enableMotor3 ? CalcSpeed(2, motor2_Index, limit3, angleRatio,    reverse3) : 0;
-        int s4 = enableMotor4 ? CalcSpeed(3, motor4_Index, limit4, distanceRatio, reverse4) : 0;
+        // ── 2. 각 모터 명령 계산: 풀파워(+1) / 정지(0) / 풀파워역방향(-1) ──
+        int c1 = enableMotor1 ? CalcCommand(0, motor1_Index, limit1, distanceRatio, reverse1) : 0;
+        int c2 = enableMotor2 ? CalcCommand(1, motor2_Index, limit2, angleRatio,    reverse2) : 0;
+        int c3 = enableMotor3 ? CalcCommand(2, motor2_Index, limit3, angleRatio,    reverse3) : 0;
+        int c4 = enableMotor4 ? CalcCommand(3, motor4_Index, limit4, distanceRatio, reverse4) : 0;
 
-        lastSpeed[0] = s1; lastSpeed[1] = s2;
-        lastSpeed[2] = s3; lastSpeed[3] = s4;
+        lastCmd[0] = c1; lastCmd[1] = c2;
+        lastCmd[2] = c3; lastCmd[3] = c4;
 
         // ── 3. 패킷 전송 ──
-        string packet = $"{s1},{s2},{s3},{s4}";
+        string packet = $"{c1},{c2},{c3},{c4}";
         SendPacket(packet);
 
         // ── 4. Inspector 모니터링 ──
@@ -130,16 +125,16 @@ public class RealSeatBridge : MonoBehaviour
         monitorPos3 = estimatedPos[2]; monitorPos4 = estimatedPos[3];
         monitorTarget1 = targetSteps[0]; monitorTarget2 = targetSteps[1];
         monitorTarget3 = targetSteps[2]; monitorTarget4 = targetSteps[3];
-        monitorSpeed1 = s1; monitorSpeed2 = s2;
-        monitorSpeed3 = s3; monitorSpeed4 = s4;
+        monitorCmd1 = c1; monitorCmd2 = c2;
+        monitorCmd3 = c3; monitorCmd4 = c4;
     }
 
     /// <summary>
-    /// P제어: 오차에 비례하는 속도(-255~+255)를 계산한다.
-    /// 움직일 때: 최소 minPWM 이상 보장 (소음 구간 건너뜀)
-    /// 도착하면: 즉시 0 차단
+    /// 단순 방향 제어: 오차가 있으면 풀파워로 그 방향 이동, 도착하면 정지.
+    /// 반환: +1 (정방향 풀파워), -1 (역방향 풀파워), 0 (정지)
+    /// 아두이노가 항상 maxSpeed(255)로 구동하므로 소음 구간 진입 없음.
     /// </summary>
-    int CalcSpeed(int motorIdx, int partIdx, int limit, float ratio, bool isReverse)
+    int CalcCommand(int motorIdx, int partIdx, int limit, float ratio, bool isReverse)
     {
         // 목표 스텝 계산
         float offset = GetSeatPartOffset(partIdx);
@@ -151,29 +146,18 @@ public class RealSeatBridge : MonoBehaviour
         // 추정 위치 클램프
         estimatedPos[motorIdx] = Mathf.Clamp(estimatedPos[motorIdx], -limit, limit);
 
-        // 오차 계산
+        // 오차
         float error = target - estimatedPos[motorIdx];
-        float absError = Mathf.Abs(error);
 
-        // ── 데드존: 목표에 충분히 가까우면 정지 ──
-        if (absError < deadZone) return 0;
+        // 데드존 이내면 정지
+        if (Mathf.Abs(error) < deadZone) return 0;
 
-        // ── P제어: 오차에 비례한 속도 ──
-        float rawSpeed = absError * kP;
+        // 리밋 보호
+        if (error > 0 && estimatedPos[motorIdx] >= limit) return 0;
+        if (error < 0 && estimatedPos[motorIdx] <= -limit) return 0;
 
-        // ★ 소음 방지: 움직이기로 했으면 최소 minPWM 보장 ★
-        // (0 ~ minPWM 사이의 PWM은 절대 사용하지 않음)
-        float speed = Mathf.Max(rawSpeed, minPWM);
-        speed = Mathf.Min(speed, 255f);
-
-        // 방향 적용
-        int signedSpeed = error > 0 ? (int)speed : -(int)speed;
-
-        // 리밋 끝에서 더 이상 나가지 않도록
-        if (signedSpeed > 0 && estimatedPos[motorIdx] >= limit) return 0;
-        if (signedSpeed < 0 && estimatedPos[motorIdx] <= -limit) return 0;
-
-        return signedSpeed;
+        // 오차 방향으로 풀파워
+        return error > 0 ? 1 : -1;
     }
 
     float GetSeatPartOffset(int index)
