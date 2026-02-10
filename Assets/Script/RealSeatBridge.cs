@@ -47,12 +47,15 @@ public class RealSeatBridge : MonoBehaviour
     [Tooltip("비례 게인: 오차(스텝) × kP = PWM값. 높으면 빠른 반응, 낮으면 부드러운 반응")]
     public float kP = 0.5f;
 
-    [Tooltip("소음 방지 최소 PWM: 이 값 미만의 속도는 즉시 0 차단")]
+    [Tooltip("소음 방지 최소 PWM: 움직일 때 이 값 이상만 사용, 멈출 때 즉시 0")]
     public int minPWM = 130;
+
+    [Tooltip("정지 판정 데드존 (스텝): 오차가 이 이하면 도착으로 판단하고 정지")]
+    public float deadZone = 20f;
 
     [Header("5. Dead Reckoning (위치 추정)")]
     [Tooltip("PWM 255일 때 초당 추정 이동 스텝 수. 실제 모터 속도에 맞게 튜닝")]
-    public float stepsPerSecondAtMax = 500f;
+    public float stepsPerSecondAtMax = 1000f;
 
     [Header("Motor 1 : Slide (거리)")]
     public int motor1_Index = 0;
@@ -133,7 +136,8 @@ public class RealSeatBridge : MonoBehaviour
 
     /// <summary>
     /// P제어: 오차에 비례하는 속도(-255~+255)를 계산한다.
-    /// |속도| < minPWM 이면 소음 방지를 위해 즉시 0 차단.
+    /// 움직일 때: 최소 minPWM 이상 보장 (소음 구간 건너뜀)
+    /// 도착하면: 즉시 0 차단
     /// </summary>
     int CalcSpeed(int motorIdx, int partIdx, int limit, float ratio, bool isReverse)
     {
@@ -147,19 +151,29 @@ public class RealSeatBridge : MonoBehaviour
         // 추정 위치 클램프
         estimatedPos[motorIdx] = Mathf.Clamp(estimatedPos[motorIdx], -limit, limit);
 
-        // P제어
+        // 오차 계산
         float error = target - estimatedPos[motorIdx];
-        int speed = (int)Mathf.Clamp(error * kP, -255f, 255f);
+        float absError = Mathf.Abs(error);
 
-        // ★ 소음 방지: |speed| < minPWM → 즉시 0 차단 ★
-        if (speed > 0 && speed < minPWM) speed = 0;
-        if (speed < 0 && speed > -minPWM) speed = 0;
+        // ── 데드존: 목표에 충분히 가까우면 정지 ──
+        if (absError < deadZone) return 0;
+
+        // ── P제어: 오차에 비례한 속도 ──
+        float rawSpeed = absError * kP;
+
+        // ★ 소음 방지: 움직이기로 했으면 최소 minPWM 보장 ★
+        // (0 ~ minPWM 사이의 PWM은 절대 사용하지 않음)
+        float speed = Mathf.Max(rawSpeed, minPWM);
+        speed = Mathf.Min(speed, 255f);
+
+        // 방향 적용
+        int signedSpeed = error > 0 ? (int)speed : -(int)speed;
 
         // 리밋 끝에서 더 이상 나가지 않도록
-        if (speed > 0 && estimatedPos[motorIdx] >= limit) speed = 0;
-        if (speed < 0 && estimatedPos[motorIdx] <= -limit) speed = 0;
+        if (signedSpeed > 0 && estimatedPos[motorIdx] >= limit) return 0;
+        if (signedSpeed < 0 && estimatedPos[motorIdx] <= -limit) return 0;
 
-        return speed;
+        return signedSpeed;
     }
 
     float GetSeatPartOffset(int index)
