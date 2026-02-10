@@ -43,9 +43,11 @@ public class RealSeatBridge : MonoBehaviour
     [Tooltip("각도(Back/Bottom)용: Unity 오프셋이 크므로(~10°) 작은 값 필요")]
     public float angleRatio = 200f;
 
-    [Header("4. 제어 설정")]
-    [Tooltip("정지 판정 데드존 (스텝): 오차가 이 이하면 도착 판단하고 정지")]
-    public float deadZone = 30f;
+    [Header("4. 히스테리시스 설정")]
+    [Tooltip("시작 임계값: 정지 상태에서 이만큼 오차가 쌓여야 움직이기 시작")]
+    public float startThreshold = 50f;
+    [Tooltip("정지 임계값: 움직이는 중에 오차가 이 이하면 정지")]
+    public float stopThreshold = 10f;
 
     [Header("5. Dead Reckoning (위치 추정)")]
     [Tooltip("풀파워(255)일 때 초당 추정 이동 스텝 수. 실제 모터 속도에 맞게 튜닝")]
@@ -76,6 +78,7 @@ public class RealSeatBridge : MonoBehaviour
     private float[] estimatedPos = new float[4];
     private int[] lastCmd = new int[4];
     private float[] targetSteps = new float[4];
+    private bool[] isMoving = new bool[4];
 
     void Start()
     {
@@ -85,6 +88,7 @@ public class RealSeatBridge : MonoBehaviour
             estimatedPos[i] = 0f;
             lastCmd[i] = 0;
             targetSteps[i] = 0f;
+            isMoving[i] = false;
         }
     }
 
@@ -93,7 +97,11 @@ public class RealSeatBridge : MonoBehaviour
         // 리셋
         if (Input.GetKeyDown(resetKey))
         {
-            for (int i = 0; i < 4; i++) estimatedPos[i] = 0f;
+            for (int i = 0; i < 4; i++)
+            {
+                estimatedPos[i] = 0f;
+                isMoving[i] = false;
+            }
             Debug.Log("<color=cyan>[RealSeatBridge] Position Reset to 0</color>");
         }
 
@@ -103,11 +111,10 @@ public class RealSeatBridge : MonoBehaviour
         float dt = Time.deltaTime;
         for (int i = 0; i < 4; i++)
         {
-            // lastCmd는 -1, 0, +1 이므로 방향 × 풀스피드 × 시간
             estimatedPos[i] += lastCmd[i] * stepsPerSecondAtMax * dt;
         }
 
-        // ── 2. 각 모터 명령 계산: 풀파워(+1) / 정지(0) / 풀파워역방향(-1) ──
+        // ── 2. 각 모터 명령 계산 ──
         int c1 = enableMotor1 ? CalcCommand(0, motor1_Index, limit1, distanceRatio, reverse1) : 0;
         int c2 = enableMotor2 ? CalcCommand(1, motor2_Index, limit2, angleRatio,    reverse2) : 0;
         int c3 = enableMotor3 ? CalcCommand(2, motor2_Index, limit3, angleRatio,    reverse3) : 0;
@@ -130,9 +137,10 @@ public class RealSeatBridge : MonoBehaviour
     }
 
     /// <summary>
-    /// 단순 방향 제어: 오차가 있으면 풀파워로 그 방향 이동, 도착하면 정지.
-    /// 반환: +1 (정방향 풀파워), -1 (역방향 풀파워), 0 (정지)
-    /// 아두이노가 항상 maxSpeed(255)로 구동하므로 소음 구간 진입 없음.
+    /// 히스테리시스 방향 제어.
+    /// 정지 중: 오차가 startThreshold 이상 쌓여야 움직이기 시작.
+    /// 움직이는 중: 오차가 stopThreshold 이하로 줄어야 정지.
+    /// → 한번 시작하면 충분히 오래 돌아서 실제 모터가 확실히 움직인다.
     /// </summary>
     int CalcCommand(int motorIdx, int partIdx, int limit, float ratio, bool isReverse)
     {
@@ -148,13 +156,30 @@ public class RealSeatBridge : MonoBehaviour
 
         // 오차
         float error = target - estimatedPos[motorIdx];
+        float absError = Mathf.Abs(error);
 
-        // 데드존 이내면 정지
-        if (Mathf.Abs(error) < deadZone) return 0;
+        if (isMoving[motorIdx])
+        {
+            // ── 움직이는 중: 작은 오차까지 끝까지 추적 ──
+            if (absError <= stopThreshold)
+            {
+                isMoving[motorIdx] = false;
+                return 0;
+            }
+        }
+        else
+        {
+            // ── 정지 중: 충분한 오차가 쌓여야 시작 ──
+            if (absError <= startThreshold)
+            {
+                return 0;
+            }
+            isMoving[motorIdx] = true;
+        }
 
         // 리밋 보호
-        if (error > 0 && estimatedPos[motorIdx] >= limit) return 0;
-        if (error < 0 && estimatedPos[motorIdx] <= -limit) return 0;
+        if (error > 0 && estimatedPos[motorIdx] >= limit) { isMoving[motorIdx] = false; return 0; }
+        if (error < 0 && estimatedPos[motorIdx] <= -limit) { isMoving[motorIdx] = false; return 0; }
 
         // 오차 방향으로 풀파워
         return error > 0 ? 1 : -1;
