@@ -24,11 +24,11 @@ public class RealSeatBridge : MonoBehaviour
     public float monitorTarget3 = 0;
     public float monitorTarget4 = 0;
 
-    [Header("=== 모니터링: 전송 명령 ===")]
-    public int monitorCmd1 = 0;
-    public int monitorCmd2 = 0;
-    public int monitorCmd3 = 0;
-    public int monitorCmd4 = 0;
+    [Header("=== 모니터링: 전송 속도 (PWM) ===")]
+    public int monitorSpeed1 = 0;
+    public int monitorSpeed2 = 0;
+    public int monitorSpeed3 = 0;
+    public int monitorSpeed4 = 0;
 
     [Header("1. 시리얼 설정")]
     public string portName = "COM6";
@@ -43,14 +43,18 @@ public class RealSeatBridge : MonoBehaviour
     [Tooltip("각도(Back/Bottom)용: Unity 오프셋이 크므로(~10°) 작은 값 필요")]
     public float angleRatio = 200f;
 
-    [Header("4. 히스테리시스 설정")]
-    [Tooltip("시작 임계값: 정지 상태에서 이만큼 오차가 쌓여야 움직이기 시작")]
+    [Header("4. P제어 + 히스테리시스")]
+    [Tooltip("비례 게인: 오차(스텝) × kP = PWM값")]
+    public float kP = 0.5f;
+    [Tooltip("소음 방지 최소 PWM: 움직일 때 이 값 이상만 사용")]
+    public int minPWM = 130;
+    [Tooltip("시작 임계값: 정지 상태에서 이만큼 오차가 쌓여야 시작")]
     public float startThreshold = 50f;
     [Tooltip("정지 임계값: 움직이는 중에 오차가 이 이하면 정지")]
     public float stopThreshold = 10f;
 
     [Header("5. Dead Reckoning (위치 추정)")]
-    [Tooltip("풀파워(255)일 때 초당 추정 이동 스텝 수. 실제 모터 속도에 맞게 튜닝")]
+    [Tooltip("PWM 255일 때 초당 추정 이동 스텝 수. 실제 모터 속도에 맞게 튜닝")]
     public float stepsPerSecondAtMax = 1000f;
 
     [Header("Motor 1 : Slide (거리)")]
@@ -76,7 +80,7 @@ public class RealSeatBridge : MonoBehaviour
     private SerialPort sp;
     private string lastPacket = "";
     private float[] estimatedPos = new float[4];
-    private int[] lastCmd = new int[4];
+    private int[] lastSpeed = new int[4];
     private float[] targetSteps = new float[4];
     private bool[] isMoving = new bool[4];
 
@@ -86,7 +90,7 @@ public class RealSeatBridge : MonoBehaviour
         for (int i = 0; i < 4; i++)
         {
             estimatedPos[i] = 0f;
-            lastCmd[i] = 0;
+            lastSpeed[i] = 0;
             targetSteps[i] = 0f;
             isMoving[i] = false;
         }
@@ -107,24 +111,24 @@ public class RealSeatBridge : MonoBehaviour
 
         if (sp == null || !sp.IsOpen || seatController == null) return;
 
-        // ── 1. Dead Reckoning: 지난 프레임의 명령으로 추정 위치 갱신 ──
+        // ── 1. Dead Reckoning: 지난 프레임의 속도로 추정 위치 갱신 ──
         float dt = Time.deltaTime;
         for (int i = 0; i < 4; i++)
         {
-            estimatedPos[i] += lastCmd[i] * stepsPerSecondAtMax * dt;
+            estimatedPos[i] += (lastSpeed[i] / 255f) * stepsPerSecondAtMax * dt;
         }
 
-        // ── 2. 각 모터 명령 계산 ──
-        int c1 = enableMotor1 ? CalcCommand(0, motor1_Index, limit1, distanceRatio, reverse1) : 0;
-        int c2 = enableMotor2 ? CalcCommand(1, motor2_Index, limit2, angleRatio,    reverse2) : 0;
-        int c3 = enableMotor3 ? CalcCommand(2, motor2_Index, limit3, angleRatio,    reverse3) : 0;
-        int c4 = enableMotor4 ? CalcCommand(3, motor4_Index, limit4, distanceRatio, reverse4) : 0;
+        // ── 2. 각 모터 속도 계산 ──
+        int s1 = enableMotor1 ? CalcSpeed(0, motor1_Index, limit1, distanceRatio, reverse1) : 0;
+        int s2 = enableMotor2 ? CalcSpeed(1, motor2_Index, limit2, angleRatio,    reverse2) : 0;
+        int s3 = enableMotor3 ? CalcSpeed(2, motor2_Index, limit3, angleRatio,    reverse3) : 0;
+        int s4 = enableMotor4 ? CalcSpeed(3, motor4_Index, limit4, distanceRatio, reverse4) : 0;
 
-        lastCmd[0] = c1; lastCmd[1] = c2;
-        lastCmd[2] = c3; lastCmd[3] = c4;
+        lastSpeed[0] = s1; lastSpeed[1] = s2;
+        lastSpeed[2] = s3; lastSpeed[3] = s4;
 
         // ── 3. 패킷 전송 ──
-        string packet = $"{c1},{c2},{c3},{c4}";
+        string packet = $"{s1},{s2},{s3},{s4}";
         SendPacket(packet);
 
         // ── 4. Inspector 모니터링 ──
@@ -132,17 +136,17 @@ public class RealSeatBridge : MonoBehaviour
         monitorPos3 = estimatedPos[2]; monitorPos4 = estimatedPos[3];
         monitorTarget1 = targetSteps[0]; monitorTarget2 = targetSteps[1];
         monitorTarget3 = targetSteps[2]; monitorTarget4 = targetSteps[3];
-        monitorCmd1 = c1; monitorCmd2 = c2;
-        monitorCmd3 = c3; monitorCmd4 = c4;
+        monitorSpeed1 = s1; monitorSpeed2 = s2;
+        monitorSpeed3 = s3; monitorSpeed4 = s4;
     }
 
     /// <summary>
-    /// 히스테리시스 방향 제어.
-    /// 정지 중: 오차가 startThreshold 이상 쌓여야 움직이기 시작.
-    /// 움직이는 중: 오차가 stopThreshold 이하로 줄어야 정지.
-    /// → 한번 시작하면 충분히 오래 돌아서 실제 모터가 확실히 움직인다.
+    /// 히스테리시스 + P제어.
+    /// 정지 중: 오차 > startThreshold 이면 시작.
+    /// 움직이는 중: 오차에 비례한 속도(minPWM~255), 오차 ≤ stopThreshold 이면 정지.
+    /// → 한번 시작하면 끊기지 않고 연속 감속 후 정지. 소음 구간(0~minPWM) 진입 없음.
     /// </summary>
-    int CalcCommand(int motorIdx, int partIdx, int limit, float ratio, bool isReverse)
+    int CalcSpeed(int motorIdx, int partIdx, int limit, float ratio, bool isReverse)
     {
         // 목표 스텝 계산
         float offset = GetSeatPartOffset(partIdx);
@@ -158,9 +162,9 @@ public class RealSeatBridge : MonoBehaviour
         float error = target - estimatedPos[motorIdx];
         float absError = Mathf.Abs(error);
 
+        // ── 히스테리시스: 시작/정지 판정 ──
         if (isMoving[motorIdx])
         {
-            // ── 움직이는 중: 작은 오차까지 끝까지 추적 ──
             if (absError <= stopThreshold)
             {
                 isMoving[motorIdx] = false;
@@ -169,7 +173,6 @@ public class RealSeatBridge : MonoBehaviour
         }
         else
         {
-            // ── 정지 중: 충분한 오차가 쌓여야 시작 ──
             if (absError <= startThreshold)
             {
                 return 0;
@@ -181,8 +184,11 @@ public class RealSeatBridge : MonoBehaviour
         if (error > 0 && estimatedPos[motorIdx] >= limit) { isMoving[motorIdx] = false; return 0; }
         if (error < 0 && estimatedPos[motorIdx] <= -limit) { isMoving[motorIdx] = false; return 0; }
 
-        // 오차 방향으로 풀파워
-        return error > 0 ? 1 : -1;
+        // ── P제어: 오차에 비례한 속도, 최소 minPWM 보장 ──
+        float rawSpeed = absError * kP;
+        int speed = (int)Mathf.Clamp(rawSpeed, minPWM, 255f);
+
+        return error > 0 ? speed : -speed;
     }
 
     float GetSeatPartOffset(int index)
