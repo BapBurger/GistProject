@@ -1,6 +1,7 @@
 using UnityEngine;
 using System.IO.Ports;
 using System;
+using System.Text;
 
 public class RealSeatBridge : MonoBehaviour
 {
@@ -38,24 +39,26 @@ public class RealSeatBridge : MonoBehaviour
     public SeatController seatController;
 
     [Header("3. 변환 비율 (Unity값 → 가상 스텝)")]
-    [Tooltip("거리(Slide/Heave)용: Unity 오프셋이 작으므로(~0.1) 큰 값 필요")]
-    public float distanceRatio = 5000f;
-    [Tooltip("각도(Back/Bottom)용: Unity 오프셋이 크므로(~10°) 작은 값 필요")]
-    public float angleRatio = 200f;
+    public float distanceRatio = 5000f; // Slide, Heave
+    public float angleRatio = 200f;     // Tilt
 
-    [Header("4. P제어 + 히스테리시스")]
-    [Tooltip("비례 게인: 오차(스텝) × kP = PWM값")]
-    public float kP = 0.5f;
-    [Tooltip("소음 방지 최소 PWM: 움직일 때 이 값 이상만 사용")]
+    [Header("4. 피드포워드 + P제어 (핵심!)")]
+    [Tooltip("속도 피드포워드 게인: 가상 시트 속도를 얼마나 반영할지 (0.5~2.0)")]
+    public float kV = 1.0f; // ★ Feedforward Gain
+
+    [Tooltip("위치 보정 게인 (P): 오차를 얼마나 빨리 수정할지 (0.5~2.0)")]
+    public float kP = 1.0f; // ★ Position Correction Gain
+
+    [Tooltip("소음 방지 최소 PWM: 이 값 이하는 0으로 처리")]
     public int minPWM = 130;
-    [Tooltip("시작 임계값: 정지 상태에서 이만큼 오차가 쌓여야 시작")]
-    public float startThreshold = 50f;
-    [Tooltip("정지 임계값: 움직이는 중에 오차가 이 이하면 정지")]
-    public float stopThreshold = 10f;
 
     [Header("5. Dead Reckoning (위치 추정)")]
-    [Tooltip("PWM 255일 때 초당 추정 이동 스텝 수. 실제 모터 속도에 맞게 튜닝")]
+    [Tooltip("PWM 255일 때 초당 이동 스텝 수 (튜닝 필요)")]
     public float stepsPerSecondAtMax = 1000f;
+
+    [Header("6. 중력 보정 (Drift 방지)")]
+    [Tooltip("등받이가 누울 때(중력 방향)는 값을 빼고, 일어날 때(반중력)는 값을 더해줍니다.")]
+    public int backSeatBias = 30; // ★ 등받이 전용 보정값 (눕는 게 문제라면 양수 입력)
 
     [Header("Motor 1 : Slide (거리)")]
     public int motor1_Index = 0;
@@ -80,9 +83,10 @@ public class RealSeatBridge : MonoBehaviour
     private SerialPort sp;
     private string lastPacket = "";
     private float[] estimatedPos = new float[4];
-    private int[] lastSpeed = new int[4];
     private float[] targetSteps = new float[4];
-    private bool[] isMoving = new bool[4];
+
+    // ★ 피드포워드를 위한 이전 프레임 위치 저장
+    private float[] prevTargetSteps = new float[4];
 
     void Start()
     {
@@ -90,9 +94,8 @@ public class RealSeatBridge : MonoBehaviour
         for (int i = 0; i < 4; i++)
         {
             estimatedPos[i] = 0f;
-            lastSpeed[i] = 0;
             targetSteps[i] = 0f;
-            isMoving[i] = false;
+            prevTargetSteps[i] = 0f;
         }
     }
 
@@ -104,34 +107,34 @@ public class RealSeatBridge : MonoBehaviour
             for (int i = 0; i < 4; i++)
             {
                 estimatedPos[i] = 0f;
-                isMoving[i] = false;
+                prevTargetSteps[i] = targetSteps[i]; // 튀는거 방지
             }
             Debug.Log("<color=cyan>[RealSeatBridge] Position Reset to 0</color>");
         }
 
         if (sp == null || !sp.IsOpen || seatController == null) return;
 
-        // ── 1. Dead Reckoning: 지난 프레임의 속도로 추정 위치 갱신 ──
+        // ── 1. Dead Reckoning: 내 위치 추정 (지난 프레임 PWM 기준) ──
+        // (주의: 여기서는 단순화를 위해 monitorSpeed 변수를 사용합니다)
         float dt = Time.deltaTime;
-        for (int i = 0; i < 4; i++)
-        {
-            estimatedPos[i] += (lastSpeed[i] / 255f) * stepsPerSecondAtMax * dt;
-        }
+        if (dt <= 0) return;
 
-        // ── 2. 각 모터 속도 계산 ──
-        int s1 = enableMotor1 ? CalcSpeed(0, motor1_Index, limit1, distanceRatio, reverse1) : 0;
-        int s2 = enableMotor2 ? CalcSpeed(1, motor2_Index, limit2, angleRatio,    reverse2) : 0;
-        int s3 = enableMotor3 ? CalcSpeed(2, motor2_Index, limit3, angleRatio,    reverse3) : 0;
-        int s4 = enableMotor4 ? CalcSpeed(3, motor4_Index, limit4, distanceRatio, reverse4) : 0;
+        estimatedPos[0] += (monitorSpeed1 / 255f) * stepsPerSecondAtMax * dt;
+        estimatedPos[1] += (monitorSpeed2 / 255f) * stepsPerSecondAtMax * dt;
+        estimatedPos[2] += (monitorSpeed3 / 255f) * stepsPerSecondAtMax * dt;
+        estimatedPos[3] += (monitorSpeed4 / 255f) * stepsPerSecondAtMax * dt;
 
-        lastSpeed[0] = s1; lastSpeed[1] = s2;
-        lastSpeed[2] = s3; lastSpeed[3] = s4;
+        // ── 2. 속도 계산 (Feedforward + P) ──
+        int s1 = enableMotor1 ? CalcSpeedFF(0, motor1_Index, limit1, distanceRatio, reverse1, dt) : 0;
+        int s2 = enableMotor2 ? CalcSpeedFF(1, motor2_Index, limit2, angleRatio, reverse2, dt) : 0;
+        int s3 = enableMotor3 ? CalcSpeedFF(2, motor2_Index, limit3, angleRatio, reverse3, dt) : 0; // Motor 3 -> Back Index
+        int s4 = enableMotor4 ? CalcSpeedFF(3, motor4_Index, limit4, distanceRatio, reverse4, dt) : 0;
 
         // ── 3. 패킷 전송 ──
         string packet = $"{s1},{s2},{s3},{s4}";
         SendPacket(packet);
 
-        // ── 4. Inspector 모니터링 ──
+        // ── 4. 모니터링 업데이트 ──
         monitorPos1 = estimatedPos[0]; monitorPos2 = estimatedPos[1];
         monitorPos3 = estimatedPos[2]; monitorPos4 = estimatedPos[3];
         monitorTarget1 = targetSteps[0]; monitorTarget2 = targetSteps[1];
@@ -140,57 +143,67 @@ public class RealSeatBridge : MonoBehaviour
         monitorSpeed3 = s3; monitorSpeed4 = s4;
     }
 
-    /// <summary>
-    /// 히스테리시스 + P제어.
-    /// 정지 중: 오차 > startThreshold 이면 시작.
-    /// 움직이는 중: 오차에 비례한 속도(minPWM~255), 오차 ≤ stopThreshold 이면 정지.
-    /// → 한번 시작하면 끊기지 않고 연속 감속 후 정지. 소음 구간(0~minPWM) 진입 없음.
-    /// </summary>
-    int CalcSpeed(int motorIdx, int partIdx, int limit, float ratio, bool isReverse)
+
+
+    int CalcSpeedFF(int motorIdx, int partIdx, int limit, float ratio, bool isReverse, float dt)
     {
-        // 목표 스텝 계산
+        // 1. 목표 위치 계산
         float offset = GetSeatPartOffset(partIdx);
         float target = offset * ratio;
         if (isReverse) target *= -1f;
         target = Mathf.Clamp(target, -limit, limit);
         targetSteps[motorIdx] = target;
 
-        // 추정 위치 클램프
+        // 2. 가상 시트의 속도 계산 (Feedforward)
+        float targetVelocity = (target - prevTargetSteps[motorIdx]) / dt;
+        prevTargetSteps[motorIdx] = target;
+
+        // 3. 위치 오차 계산 (P Control)
         estimatedPos[motorIdx] = Mathf.Clamp(estimatedPos[motorIdx], -limit, limit);
+        float positionError = target - estimatedPos[motorIdx];
 
-        // 오차
-        float error = target - estimatedPos[motorIdx];
-        float absError = Mathf.Abs(error);
+        // 4. 최종 속도 명령 계산
+        float pwmFromVel = targetVelocity * kV * (255f / stepsPerSecondAtMax);
+        float pwmFromPos = positionError * kP;
+        float finalPWM = pwmFromVel + pwmFromPos;
 
-        // ── 히스테리시스: 시작/정지 판정 ──
-        if (isMoving[motorIdx])
+        int outputPWM = (int)finalPWM;
+
+        // =================================================================
+        // ★ [추가됨] 중력 보정 (Gravity Bias) - 등받이 눕는 현상 해결
+        // =================================================================
+        // 만약 이 모터가 '등받이(Back Seat)'라면? (index 1번)
+        if (motorIdx == 1 || motorIdx == 2)
         {
-            if (absError <= stopThreshold)
+            // 목표가 '위로(일어나는 방향)' 갈 때 힘을 더해줌
+            // (참고: 방향은 배선에 따라 다를 수 있으니, 
+            // 만약 더 빨리 누워버리면 backSeatBias를 음수(-30)로 바꾸세요)
+            outputPWM += backSeatBias;
+        }
+
+        // 리밋 도달 시 차단
+        if (outputPWM > 0 && estimatedPos[motorIdx] >= limit) return 0;
+        if (outputPWM < 0 && estimatedPos[motorIdx] <= -limit) return 0;
+
+        // 부스트 로직 (최소 기동 부하)
+        int absPWM = Mathf.Abs(outputPWM);
+        int deadZoneNoise = 5;
+
+        if (absPWM > deadZoneNoise)
+        {
+            if (absPWM < minPWM)
             {
-                isMoving[motorIdx] = false;
-                return 0;
+                if (outputPWM > 0) outputPWM = minPWM;
+                else outputPWM = -minPWM;
             }
         }
         else
         {
-            if (absError <= startThreshold)
-            {
-                return 0;
-            }
-            isMoving[motorIdx] = true;
+            outputPWM = 0;
         }
 
-        // 리밋 보호
-        if (error > 0 && estimatedPos[motorIdx] >= limit) { isMoving[motorIdx] = false; return 0; }
-        if (error < 0 && estimatedPos[motorIdx] <= -limit) { isMoving[motorIdx] = false; return 0; }
-
-        // ── P제어: 오차에 비례한 속도, 최소 minPWM 보장 ──
-        float rawSpeed = absError * kP;
-        int speed = (int)Mathf.Clamp(rawSpeed, minPWM, 255f);
-
-        return error > 0 ? speed : -speed;
+        return Mathf.Clamp(outputPWM, -255, 255);
     }
-
     float GetSeatPartOffset(int index)
     {
         if (index >= 0 && index < seatController.seatParts.Length)
@@ -211,24 +224,12 @@ public class RealSeatBridge : MonoBehaviour
 
     void OpenConnection()
     {
-        try
-        {
-            sp = new SerialPort(portName, baudRate);
-            sp.Open();
-            sp.ReadTimeout = 20;
-        }
-        catch (Exception e)
-        {
-            Debug.LogError($"[RealSeatBridge] Connection Error: {e.Message}");
-        }
+        try { sp = new SerialPort(portName, baudRate); sp.Open(); sp.ReadTimeout = 20; }
+        catch (Exception e) { Debug.LogError($"[RealSeatBridge] Connection Error: {e.Message}"); }
     }
 
     void OnApplicationQuit()
     {
-        if (sp != null && sp.IsOpen)
-        {
-            sp.WriteLine("0,0,0,0");
-            sp.Close();
-        }
+        if (sp != null && sp.IsOpen) { sp.WriteLine("0,0,0,0"); sp.Close(); }
     }
 }
